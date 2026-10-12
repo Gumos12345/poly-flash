@@ -107,3 +107,41 @@ Kluczowe zastrzezenia do tych +9,5%:
 4. Historia CLOB w illiquid rynkach to czesto ostatni trade/quote, nie ksiazka => te ceny nie sa
    wykonywalne (brak plynnosci na tych poziomach). To najprawdopodobniejsza przyczyna zawyzenia.
 5. Tylko 30 dni historii (API) i brak danych o tym, czy backtest uwzglednil filtry bota.
+
+
+## 7. Przeglad prawdziwego kodu (gist `finance_6h_start_z_historia_v3`, main.rs 3990 linii)
+Kod zdekodowany do `pm-rust/src/main.rs`, skrypt do `pm-rust/finance_6h_start_z_historia_v3-1.sh`.
+
+**NAJWAZNIEJSZE: live bot nie gra tego, co bylo backtestowane.**
+- `manage_exits` (linia ~2009): dla `kind != "crypto"` (a Finance wchodzi z `kind="finance"`) time-exit =
+  `opened_at + SPORTS_TIME_EXIT_SEC`, a `SPORTS_TIME_EXIT_SEC = 7200` => **twarde wyjscie po 2h**.
+- Ten sam backtest (1442 rynki tag 120, 30 dni, dane CLOB ~10 min), z time-exitem 2h vs bez:
+  | konfiguracja | sygnaly | win | ROI/pozycja (brutto) |
+  |---|---|---|---|
+  | 6h -40/+40, time-exit 2h | 16096 | 48,3% | +9,53% |
+  | 6h -40/+40, BEZ time-exitu (hold do TP/SL) | 16100 | **84,4%** | **+26,70%** |
+  | 6h -30/+30, time-exit 2h | 33880 | 49,4% | +7,40% |
+  | 6h -30/+30, BEZ time-exitu | 33890 | **84,8%** | **+19,57%** |
+  => tabelka 73-76% / +12-21% z backtestu uzytkownika odpowiada wariantowi BEZ time-exitu.
+  Wariant z 2h (czyli to, co chodzi na live) ma ok. polowe win-rate i ~1/3 ROI.
+
+**Pozostale znaleziska:**
+1. Min. rozmiar zlecenia: wszystkie rynki tag 120 maja `orderMinSize=5` (share'ow). Przy stawce 1$ i
+   ask > ~0.20 zlecenie BUY (5 share'ow) nie ma szans -> odrzucenie "minimum size". W kodzie BRAK
+   sprawdzania `orderMinSize`; jest tylko `price in [0.15, 0.90]`. Fix: `stake = max(stake, ask*5)` albo
+   filtr `stake/ask >= 5`.
+2. Model oplat w paperze: `PAPER_FEE_PCT = 0.02` i tylko od strony sprzedazy (jedna strona).
+   Realnie Finance = 0.04 na strone wg `fee = C*rate*p*(1-p)` -> przy p=0.2 ok. 3,2% (kupno) + 2,9% (sprzedaz)
+   = ~6% wartosci pozycji. Papier zaniza koszty o ~3 p.p. na transakcje => `dry_stats.txt` jest optymistyczne.
+3. TP/SL liczone na BID, wejscie po ASK (`manage_exits` uzywa `get_bid`). To dobrze, ale przy
+   `MAX_SPREAD_CENTS=0.05` TP +40% wymaga ruchu mid o ~40% + 5c. Ustawienie 0.05 lamie definicje TP.
+   Wrocic do 0.03 (albo 0.02).
+4. Skrypt ustawia `LIVE_MAX_EXPOSURE=${LIVE_MAX_EXPOSURE:-100000}` => wylacza bezpiecznik z kodu
+   (`live_max_exposure()` domyslnie 25). Przy bankrollu ~20$ to i tak bez znaczenia, ale zostawic 25.
+5. Banner startowy wypisuje wszystkie strategie (S5..S9, SPT, CAT 6 kategorii), choc wlaczona jest
+   tylko Finance (tag 120) - mylace przy czytaniu logow.
+6. Dobre rzeczy w kodzie: guard "brak SL = brak wejscia" (sl<1), weryfikacja wypelnienia BUY
+   (`success`/status), retry z korekta ilosci przy SELL, reconcile + phantom/dust, bid<=ask guard.
+
+Uwaga: `cargo`/`rustc` nie ma w tym sandboxie, wiec nie moge zbudowac poprawionej binarki -
+latki musza byc dostarczone jako diff/zmiany w zrodle (uzytkownik buduje u siebie).
