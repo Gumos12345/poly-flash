@@ -1,0 +1,79 @@
+# Analiza: gdzie przeniesc bota + czy strategia "kup Up po spadku" ma sens
+Dane zebrane 2026-10-12 (sandbox). Zrodla: Gamma API (`gamma-api.polymarket.com`),
+CLOB API, docs.polymarket.com/trading/fees, Binance daily klines (1m, 30 dni: 2026-09-12..2026-10-11).
+
+## 1. Tagi/kategorie: wolumen i spread (top-100 rynkow per tag, volume24hr)
+| tag_id | kategoria | suma vol24 (top100) | mediana spreadu | taker fee rate |
+|---|---|---|---|---|
+| 1 | Sports | $10.3M | 0.010 | 0.05 |
+| 100639 | Games | $8.3M | 0.010 | 0.05 |
+| 2 | Politics | $8.2M | 0.003 | 0.04 |
+| 64 | Esports | $6.3M | 0.010 | 0.05 |
+| 101757 | Recurring | $2.8M | 0.002 | 0.05 |
+| 100350 | Soccer | $2.2M | 0.010 | 0.05 |
+| 21 | Crypto | $2.0M | 0.010 | 0.07 |
+| 1312 | Crypto Prices | $1.9M | 0.006 | 0.07 |
+| 864 | Tennis | $1.3M | 0.010 | 0.05 |
+| 84 | Weather | $0.7M | 0.001 | 0.05 |
+| **120** | **Finance (obecny tag bota)** | — | — | 0.04 |
+
+Tag 120 = "Finance" to tematyka IPO / stopy Fed / rate cuts (sprawdzone eventy: `kraken-ipo-in-2025`,
+`how-many-fed-rate-cuts-in-2026`, `openai-ipo-by`). To rynki **dlugoterminowe i rzadkie** — nie da sie
+na nich "napierdalac pozycjami" ani stosowac logiki spadku z 5-minutowego okna.
+
+Proba 500 najwiekszych eventow: Sports 186 eventow / 7607 rynkow, Games 120/5445, Esports 20/392,
+Soccer 77/2252, Tennis 26/390, Crypto 39/432. W chwili snapshotu `live=true` bylo 8 eventow
+(in-play), kazdy z 12-17 rynkami (np. CS2: 15 rynkow, ATP: 16).
+
+## 2. Oplaty (docs.polymarket.com/trading/fees)
+`fee = C x feeRate x p x (1-p)` (C = liczba share'ow, p = cena). Tylko taker; maker 0 (+ rebate 15-25%).
+Rate: Crypto 0.07, Sports/Economics/Culture/Weather/Other 0.05, Finance/Politics/Tech/Mentions 0.04, Geopolitics 0.
+W praktyce: dla 100 share'ow @ $0.20 fee = $1.12 => **5.6% wartosci pozycji**; @ $0.50 => $1.75 => 3.5%.
+Im tanszy share, tym wiekszy procentowy koszt (przy $0.10 to 6.3%). To zabija skalpowanie na 5m crypto.
+
+## 3. Test "kup Up po spadku" (BTC, 30 dni, 43200 swiec 1m)
+Baseline bez sygnalu: P(okno 5m konczy sie wyzej niz open) = 50.5% (n=8640); 1h = 51.0% (n=720).
+Srednia |zmiana| w oknie: 5m = 0.075%, 1h = 0.224%.
+
+| prog. spadku | wejscie w minucie | sygnaly | P(rozliczenie Up) |
+|---|---|---|---|
+| 0.05% | 1 | 1300 | 15.8% |
+| 0.05% | 2 | 1645 | 9.2% |
+| 0.05% | 3 | 1829 | 3.8% |
+| 0.10% | 1 | 422 | 10.9% |
+| 0.20% | 1 | 75 | 4.0% |
+| 0.20% | 2 | 125 | 1.6% |
+| 1h, 0.30% | 30 | 52 | 11.5% |
+| 1h, 0.30% | 45 | 64 | 1.6% |
+
+Wniosek mechaniczny (nie "brak szczescia"): jesli cena jest ponizej open okna, to okno rozlicza sie
+"Up" tylko w 4-16% przypadkow — czyli share "Up" po spadku jest wart ~0.04-0.16 i mniej wiecej tyle
+kosztuje na rynku. Kupowanie go i trzymanie do rozliczenia = EV ~0 minus spread i fee.
+
+A geometria wyjsc bota (+30..40% TP / -90% SL) wymaga winrate **69.2%** (+40/-90) lub **75.0%** (+30/-90),
+a po doliczeniu fee przy p~0.20 juz **~78%**. Zmierzone 10-16% => EV ok. -0.7 do -0.9 na kazde 1$ stawki
+w wariancie "trzymam do rozliczenia" i mocno ujemne w wariancie TP/SL.
+
+Test powtarzalny: `notes/edge-test-btc.js` (pobiera klines z data.binance.vision i liczy tabele).
+
+## 4. Gdzie realnie mozna postawic ten bot (kolejnosc wg sensownosci)
+1. **Sports / Games / Esports in-play** (tagi 1, 100639, 64, 100350, 864) — najwiecej rynkow i wolumenu,
+   krotkie zycie rynku, ceny przereagowuja na pojedyncze zdarzenia (gol, czerwona kartka) => tylko tu
+   logika "spadek -> odbicie" ma sens ekonomiczny. Wymaga feedu na zywo (wynik/statystyki).
+2. **Weather** (tag 84) — mediana spreadu 0.001 (najlepsza na platformie), deterministyczne rozliczenie
+   (NWS/NOAA), duzo bucketow dziennych, mala konkurencja. Ale potrzebny nowy modul strategii
+   (odczyt temperatury vs bucket), nie "spadek -> Up".
+3. **Market making + liquidity rewards** (maker rebate 15-25%, rewardsMinSize/rewardsMaxSpread) —
+   jedyny strukturalnie dodatni EV sposob; to inny bot (kwotowanie obu stron, zarzadzanie zapasem).
+4. **Crypto 5m/1h up/down** — najwiecej rynkow dziennie, ale zmierzony edge ~0 przy fee 0.07 + spread 1c.
+5. **Finance/Politics/Recurring** — za rzadkie/za dlugie, nie do "napierdalania".
+6. Geopolitics — fee 0, ale illiquid i dlugi horyzont.
+
+## 5. Adresy do przeslania plikow (dla uzytkownika)
+- termbin (najprosciej, bez logowania): `cat ~/pm-rust/src/main.rs | nc termbin.com 9999` -> wypisze URL
+- 0x0.st: `curl -F 'file=@~/pm-rust/src/main.rs' https://0x0.st` -> URL
+- paste.rs: `curl --data-binary @~/pm-rust/src/main.rs https://paste.rs` -> URL
+- gist: https://gist.github.com/ -> wklej -> "Create secret gist" -> link
+- wlasne repo: https://github.com/Gumos12345/poly-flash/upload/main (PUBLICZNE!) albo nowe prywatne:
+  https://github.com/new -> nazwa `pm-rust`, Private -> upload plikow -> link (mam dostep do repo uzytkownika)
+- UWAGA: nie wysylac `~/.poly_env` ani klucza prywatnego na zadne publiczne paste/gist/repo.
