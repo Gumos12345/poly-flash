@@ -56,6 +56,33 @@ Zdekodowany prefiks (1.4 KB, tylko komentarze + `use`) zapisany w:
    odpala tryb LIVE (o ile live() przejdzie). Sugestia: domyslnie `dry`, a `live` tylko jawnie.
 6. `LIVE_MAX_EXPOSURE` domyslnie `100000` przy budzecie ~20$ => limit ekspozycji praktycznie wylaczony.
 
+## 6. Jak dostarczyc pliki (ustalenia z 1. sesji)
+- Repo klienta: `github.com/Gumos12345/poly-flash` (public, fork hardhat-defi/flashloan) — **nie ma tam bota**,
+  wiec bot zyje tylko na telefonie (Termux, `~/pm-rust`).
+- Najlepsze drogi (telefon-friendly), w kolejnosci:
+  1. `curl -F 'f=@src/main.rs' https://0x0.st` albo `cat src/main.rs | nc termbin.com 9999` -> link (bez logowania).
+  2. gist (gist.github.com w przegladarce) -> link do raw.
+  3. wrzucenie `main.rs`/`.sh` do repo `poly-flash` przez web UI -> podanie sciezki (ja zrobie `git fetch`).
+  4. wklejenie `src/main.rs` jako TEKST w kawalkach po ~300-400 linii (nie base64!).
+- Nie wklejac base64: +33% objetosci i kazde uciecie/ubytecie bajtu psuje calosc.
+
+## 7. Propozycja latki (do konsultacji, nie zastosowana)
+```bash
+# a) zgodnosc CONFIRM_LIVE z tym, czego naprawde wymaga binarka:
+want="$(grep -o 'I_UNDERSTAND_[A-Z_]*' "$HOME/pm-rust/src/main.rs" | head -n1)"
+export CONFIRM_LIVE="${want:-I_UNDERSTAND_THE_RISK}"
+
+# b) budzet: ustaw obie nazwy, zeby dzialalo niezaleznie od tego, ktora czyta kod:
+export START_BUDGET="${START_BUDGET:-20.9}"
+export LIVE_BUDGET="${LIVE_BUDGET:-$START_BUDGET}"
+
+# c) sanity cap na ekspozycje (domyslnie 100000 = brak capa):
+export LIVE_MAX_EXPOSURE="${LIVE_MAX_EXPOSURE:-25}"
+
+# d) domyslnie PAPER, live tylko jawnie; + brak live przy nieustawionym kluczu:
+MODE="${1:-dry}"
+```
+
 ## 5. Czego potrzebuje, zeby zrobic prawdziwy przeglad
 Plik jako TEKST (`src/main.rs` i caly `.sh`), nie base64:
 - najlatwiej: gist / repo na GitHubie -> link (ja pobieram),
