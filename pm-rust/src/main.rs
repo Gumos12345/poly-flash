@@ -1676,8 +1676,15 @@ fn paper_open(
     if stake < STAKE_USD_MIN {
         return;
     }
+    // Realna oplata taker: fee = shares * rate * p * (1-p), a shares = stake/p
+    // => fee = stake * rate * (1-p). Pobieramy ja od razu, jak na CLOB.
+    let buy_fee = stake * taker_rate(kind) * (1.0 - price);
+    if stake + buy_fee > state.available_budget {
+        return;
+    }
     let shares = stake / price;
-    state.available_budget -= stake;
+    state.available_budget -= stake + buy_fee;
+
     state.positions.insert(
         key.to_string(),
         Position {
@@ -1802,10 +1809,15 @@ fn paper_close(state: &mut BotState, key: &str, exit_price: f64, reason: &str, n
     let Some(pos) = state.positions.remove(key) else {
         return;
     };
-    let gross = pos.shares * exit_price;
-    let fee = gross * PAPER_FEE_PCT;
-    let net = gross - fee;
-    let pnl = net - pos.size_usd;
+    // Oplata taker DWUSTRONNIE, wg realnego wzoru Polymarket: shares * rate * p * (1-p).
+    // (Wczesniej: PAPER_FEE_PCT=2% liczone tylko od sprzedazy -> koszty zanizone o ~3 p.p.
+    //  na transakcje, a to ~10% wartosci TP +30%.)
+    let rate = taker_rate(&pos.kind);
+    let buy_fee = pos.shares * rate * pos.entry_price * (1.0 - pos.entry_price);
+    let sell_fee = pos.shares * rate * exit_price * (1.0 - exit_price);
+    let net = pos.shares * exit_price - sell_fee;
+    let pnl = net - pos.size_usd - buy_fee;
+
     state.available_budget += net;
     state.realized_pnl += pnl;
     state.trades += 1;
@@ -2006,9 +2018,14 @@ async fn manage_exits(http: &reqwest::Client, state: &mut BotState, now: u64) {
             };
             let by_hold = pos.opened_at + hold;
             by_expiry.min(by_hold)
+        } else if pos.kind == "finance" {
+            // Finance: NIE wycinamy pozycji po 2h (na 2h backtest daje ~0%/pozycja, win ~48%).
+            // Trzymamy do TP/SL z bezpiecznikiem czasu (FIN_EXIT_HOURS, domyslnie 12h).
+            pos.opened_at + fin_time_exit_sec()
         } else {
             pos.opened_at + SPORTS_TIME_EXIT_SEC
         };
+
 
         if bid >= tp_price {
             close_position(state, &key, bid, "TP", now).await;
@@ -3195,6 +3212,49 @@ const FIN_STRATS: [FinStrat; 2] = [
 ];
 const FIN_SL: f64 = 0.90;
 const FIN_MAX_PER_STRATEGY: usize = 10;
+// CLOB odrzuca zlecenia mniejsze niz orderMinSize - na wszystkich rynkach Finance to
+// 5 share'ow. Przy stawce 1$ i ask > 0.20 zlecenie BUY nie moglo byc wypelnione
+// (blad "minimum size"), dlatego bot w LIVE chodzil, ale NIE otwieral pozycji.
+const FIN_MIN_SHARES: f64 = 5.0;
+
+/// Gorna granica ask dla Finance. Na danych CLOB (30 dni, wejscie po ask / wyjscie po bid,
+/// fee 0.04 dwustronnie) sygnaly z ask <= 0.20 dawaly ~+27%/pozycja przy 24h, a sygnaly
+/// z wyzszym ask rozwadnialy wynik do ~+12%/pozycja. Nadpisz: FIN_MAX_ASK=0.30
+fn fin_max_ask() -> f64 {
+    std::env::var("FIN_MAX_ASK")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|&v| v > 0.0 && v < 1.0)
+        .unwrap_or(0.25)
+}
+
+/// Horyzont trzymania pozycji Finance. Backtest: time-exit 2h = ~0%/pozycja (i win ~48%),
+/// 12h = +17..24%/pozycja, 24h = +24..27%/pozycja. Domyslnie 12h (kompromis czas/obrot).
+/// Nadpisz bez przebudowy: FIN_EXIT_HOURS=24
+fn fin_time_exit_sec() -> u64 {
+    std::env::var("FIN_EXIT_HOURS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&h| h > 0)
+        .map(|h| h * 3600)
+        .unwrap_or(12 * 3600)
+}
+
+/// Taker fee rate wg kategorii (docs.polymarket.com/trading/fees).
+fn taker_rate(kind: &str) -> f64 {
+    match kind {
+        "finance" => 0.04,
+        "crypto" => 0.07,
+        "sports" => 0.05,
+        _ => 0.05,
+    }
+}
+
+/// Zaokraglenie w gore do grosza (min. wartosc zlecenia liczymy ostroznie).
+fn ceil_cent(x: f64) -> f64 {
+    (x * 100.0).ceil() / 100.0
+}
+const FIN_MAX_PER_STRATEGY: usize = 10;
 
 // ===========================================================================
 //  BOOTSTRAP HISTORII 6h: przy starcie (i dla nowych tokenow) wczytujemy ostatnie 6h
@@ -3352,6 +3412,8 @@ async fn scan_finance4(
 
     // Iterujemy strategie w kolejnosci priorytetu. Dedup: rynek raz wziety
     // (traded_slugs) jest pomijany przez WSZYSTKIE kolejne strategie -> zero dublowania.
+    let mut n_sig = 0usize;
+    let mut n_skip_min = 0usize;
     for cfg in FIN_STRATS.iter() {
         for (slug, tokens) in &parsed {
             if state.traded_slugs.contains_key(slug) {
@@ -3383,9 +3445,14 @@ async fn scan_finance4(
                 if ask < CAT_MIN_PRICE || ask > CAT_MAX_PRICE {
                     continue;
                 }
+                // Finance gra tylko na TANICH rynkach - patrz komentarz przy fin_max_ask().
+                if ask > fin_max_ask() {
+                    continue;
+                }
                 let hi = tracker.high(&t.token_id, CAT_LOOKBACK_SEC, now).unwrap_or(ask);
                 let drop = if hi > 0.0 { (hi - ask) / hi } else { 0.0 };
                 if drop >= cfg.drop {
+                    n_sig += 1;
                     let key = format!("{}_{}", slug, t.outcome);
                     println!(
                         "FIN {:<6} {}  @ {:.4}  drop={:.1}%  hi={:.4}  tp=+{:.0}%  | {}",
@@ -3397,6 +3464,21 @@ async fn scan_finance4(
                         cfg.tp * 100.0,
                         t.outcome
                     );
+                    // Min. rozmiar zlecenia na CLOB = FIN_MIN_SHARES (5). Przy stawce 1$ i ask > 0.20
+                    // zlecenie BUY nie moglo sie wypelnic -> bot chodzil, ale nie otwieral pozycji.
+                    // Podnosimy stawke do minimum; gdy brak srodkow, pomijamy rynek (bez bledu).
+                    let min_stake = ceil_cent(ask * FIN_MIN_SHARES * 1.02);
+                    if min_stake > state.available_budget {
+                        n_skip_min += 1;
+                        if dbg {
+                            println!(
+                                "[FIN-SKIP] {} ask={:.4} min_stake={:.2}$ > budget={:.2}$",
+                                slug, ask, min_stake, state.available_budget
+                            );
+                        }
+                        continue;
+                    }
+                    let stake = stake.max(min_stake);
                     open_position(
                         state,
                         &key,
@@ -3417,8 +3499,19 @@ async fn scan_finance4(
             }
         }
     }
+    if dbg {
+        println!(
+            "[FIN-SUMMARY] rynkow={} sygnalow={} pominietych_min_size={} budget={:.2}$ open_pos={}",
+            n_markets,
+            n_sig,
+            n_skip_min,
+            state.available_budget,
+            state.positions.len()
+        );
+    }
     n_markets
 }
+
 
 // =============================================================================
 //  LIVE ORDER (SDK) - uzywane TYLKO gdy live()==true
@@ -3861,7 +3954,16 @@ async fn main() -> Result<()> {
         STATS_FILE,
         state_file()
     );
-    println!("  strategie    : S5(5m rebound) S6(15m rebound) S7(1h rebound) S8(4h rebound) S9(1d rebound) S4(15m vol) S3(momentum) S2(mean rev) SPT(live) CAT(6 kategorii DROP40)");
+    println!("  strategie    : FINANCE-3 (tag 120): A40_40 (drop -40% / TP +40%) + C30_30 (drop -30% / TP +30%)");
+    println!(
+        "                 SL -{:.0}%  hold {}h  ask <= {:.2}  spread <= {:.3}  stawka {:.2}$  limit poz {}  | inne strategie WYLACZONE",
+        FIN_SL * 100.0,
+        fin_time_exit_sec() / 3600,
+        fin_max_ask(),
+        max_spread_cents(),
+        STAKE_USD_MIN,
+        max_positions(&state)
+    );
     println!("===================================================================");
 
     let mut tracker = PriceTracker::default();
