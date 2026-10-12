@@ -16,14 +16,14 @@
 #  pominieto z powodu min. rozmiaru/budzetu).
 # ============================================================================
 # ============================================================================
-#  finance_6h_start_z_historia_v3.sh  --  JEDEN skrypt: pobiera, instaluje, buduje LIVE i uruchamia bota.
+#  finance_6h_v4.sh  --  JEDEN skrypt: pobiera, instaluje, buduje LIVE i uruchamia bota.
 # ----------------------------------------------------------------------------
 #  UZYCIE:
-#     bash finance_6h_start_z_historia_v3.sh          -> LIVE (prawdziwe pieniadze)   [domyslnie]
-#     bash finance_6h_start_z_historia_v3.sh dry      -> PAPER (na sucho, bez kasy)
-#     bash finance_6h_start_z_historia_v3.sh doctor   -> tylko sprawdzenie portfela i salda
-#     bash finance_6h_start_z_historia_v3.sh build    -> tylko buduje (stary bot dziala dalej)
-#     bash finance_6h_start_z_historia_v3.sh run      -> uruchamia juz zbudowany plik
+#     bash finance_6h_v4.sh          -> LIVE (prawdziwe pieniadze)   [domyslnie]
+#     bash finance_6h_v4.sh dry      -> PAPER (na sucho, bez kasy)
+#     bash finance_6h_v4.sh doctor   -> tylko sprawdzenie portfela i salda
+#     bash finance_6h_v4.sh build    -> tylko buduje (stary bot dziala dalej)
+#     bash finance_6h_v4.sh run      -> uruchamia juz zbudowany plik
 #
 #  Skrypt jest SAMOWYSTARCZALNY: ma w sobie caly kod (Cargo.toml + main.rs)
 #  oraz NAPRAWE TLS dla Androida/Termux (shim rustls-platform-verifier).
@@ -52,9 +52,9 @@ err(){  printf '\n\033[1;31m[X] %s\033[0m\n' "$*"; }
 # ---------------------------------------------------------------------------
 #  TRYB 'run'  --  uruchamia JUZ ZBUDOWANY plik binarny (bez pobierania/budowania).
 #  Zastosowanie (bezpieczna aktualizacja bez zamykania pozycji):
-#     1) w DRUGIEJ sesji Termux:  bash finance_6h_start_z_historia_v3.sh build      (stary bot DZIALA dalej)
+#     1) w DRUGIEJ sesji Termux:  bash finance_6h_v4.sh build      (stary bot DZIALA dalej)
 #     2) gdy build sie skonczy:   Ctrl+C starego bota
-#     3) natychmiast:             bash finance_6h_start_z_historia_v3.sh run
+#     3) natychmiast:             bash finance_6h_v4.sh run
 #  Przerwa w kontroli pozycji to kilka SEKUND (a nie 10-15 min przebudowy).
 #  Stan (positions.json) jest zachowany -> bot wraca do tych samych pozycji i TP/SL.
 # ---------------------------------------------------------------------------
@@ -2855,12 +2855,12 @@ export POLYMARKET_PRIVATE_KEY
 # ---------------------------------------------------------------------------
 #  TRYB 'build'  --  pobiera kod i BUDUJE, ale NIE uruchamia bota.
 #  Stary (dzialajacy) bot zostaje nietkniety - to osobny proces w pamieci.
-#  Po zakonczeniu:  bash finance_6h_start_z_historia_v3.sh run
+#  Po zakonczeniu:  bash finance_6h_v4.sh run
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "build" ]; then
   say "4/6 Buduje (LIVE) - stary bot moze dalej dzialac. Cierpliwosci..."
   cargo build --release --features live
-  say "GOTOWE. Teraz: Ctrl+C starego bota i uruchom:  bash finance_6h_start_z_historia_v3.sh run"
+  say "GOTOWE. Teraz: Ctrl+C starego bota i uruchom:  bash finance_6h_v4.sh run"
   exit 0
 fi
 
@@ -2878,6 +2878,13 @@ if [ "$MODE" = "dry" ]; then
   say "4/6 Buduje (DRY) - pierwszy build potrwa ~10-15 min..."
   cargo build --release
   say "5/6 Uruchamiam PAPER (na sucho). Ctrl+C aby przerwac."
+  # PAPER musi miec te same progi co LIVE, inaczej test na sucho nic nie mowi.
+  export MAX_SPREAD_CENTS="${MAX_SPREAD_CENTS:-0.03}"
+  export FIN_EXIT_HOURS="${FIN_EXIT_HOURS:-12}"
+  export FIN_MAX_ASK="${FIN_MAX_ASK:-0.25}"
+  export MAX_POSITIONS="${MAX_POSITIONS:-20}"
+  export CAT_MAX_PAGES="${CAT_MAX_PAGES:-25}"
+  printf '\n\033[1;36m[PAPER] spread<=%s  ask<=%s  hold=%sh  limit poz=%s\033[0m\n' "$MAX_SPREAD_CENTS" "$FIN_MAX_ASK" "$FIN_EXIT_HOURS" "$MAX_POSITIONS"
   export SPORTS_MIN_VOLUME="${SPORTS_MIN_VOLUME:-250}"
 export SPORTS_MAX_VOLUME="${SPORTS_MAX_VOLUME:-20000}"
   export SPORTS_MAX_MARKETS="${SPORTS_MAX_MARKETS:-2000}"
