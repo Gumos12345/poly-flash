@@ -1,5 +1,5 @@
 --- /tmp/orig_main.rs	2026-10-12 11:15:09.530203653 +0000
-+++ src/main.rs	2026-10-12 11:16:32.643201859 +0000
++++ src/main.rs	2026-10-12 11:27:12.374188697 +0000
 @@ -1676,8 +1676,15 @@
      if stake < STAKE_USD_MIN {
          return;
@@ -17,7 +17,35 @@
      state.positions.insert(
          key.to_string(),
          Position {
-@@ -1802,10 +1809,15 @@
+@@ -1738,8 +1745,8 @@
+     if live() {
+         match live_buy(token_id, stake).await {
+             Ok(()) => println!(
+-                "[LIVE OPEN ] {:<3} {:<44} @ {:.4}  stake={:.2}$",
+-                strategy, slug, price, stake
++                "[LIVE OPEN ] {:<3} {:<44} @ {:.4}  stake={:.2}$  shares={:.2}",
++                strategy, slug, price, stake, stake / price
+             ),
+             Err(e) => {
+                 println!("[LIVE ERROR] {} -> {} (pozycja pominięta)", slug, e);
+@@ -1763,8 +1770,14 @@
+         };
+         match live_sell(&pos.token_id, pos.shares).await {
+             Ok(()) => println!(
+-                "[LIVE CLOSE] {:<3} {:<44} shares={:.2} reason={}",
+-                pos.strategy, pos.slug, pos.shares, reason
++                "[LIVE CLOSE] {:<3} {:<44} shares={:.2} entry={:.4} bid={:.4} pnl={:+.2}% reason={}",
++                pos.strategy,
++                pos.slug,
++                pos.shares,
++                pos.entry_price,
++                exit_price,
++                (exit_price - pos.entry_price) / pos.entry_price * 100.0,
++                reason
+             ),
+             Err(e) => {
+                 let es = e.to_string();
+@@ -1802,10 +1815,15 @@
      let Some(pos) = state.positions.remove(key) else {
          return;
      };
@@ -37,7 +65,7 @@
      state.available_budget += net;
      state.realized_pnl += pnl;
      state.trades += 1;
-@@ -2006,10 +2018,15 @@
+@@ -2006,10 +2024,15 @@
              };
              let by_hold = pos.opened_at + hold;
              by_expiry.min(by_hold)
@@ -53,7 +81,7 @@
          if bid >= tp_price {
              close_position(state, &key, bid, "TP", now).await;
          } else if bid <= sl_price {
-@@ -3195,6 +3212,49 @@
+@@ -3195,6 +3218,50 @@
  ];
  const FIN_SL: f64 = 0.90;
  const FIN_MAX_PER_STRATEGY: usize = 10;
@@ -96,6 +124,7 @@
 +}
 +
 +/// Zaokraglenie w gore do grosza (min. wartosc zlecenia liczymy ostroznie).
++#[allow(dead_code)]
 +fn ceil_cent(x: f64) -> f64 {
 +    (x * 100.0).ceil() / 100.0
 +}
@@ -103,16 +132,15 @@
  
  // ===========================================================================
  //  BOOTSTRAP HISTORII 6h: przy starcie (i dla nowych tokenow) wczytujemy ostatnie 6h
-@@ -3352,6 +3412,8 @@
+@@ -3352,6 +3419,7 @@
  
      // Iterujemy strategie w kolejnosci priorytetu. Dedup: rynek raz wziety
      // (traded_slugs) jest pomijany przez WSZYSTKIE kolejne strategie -> zero dublowania.
 +    let mut n_sig = 0usize;
-+    let mut n_skip_min = 0usize;
      for cfg in FIN_STRATS.iter() {
          for (slug, tokens) in &parsed {
              if state.traded_slugs.contains_key(slug) {
-@@ -3383,9 +3445,14 @@
+@@ -3383,9 +3451,14 @@
                  if ask < CAT_MIN_PRICE || ask > CAT_MAX_PRICE {
                      continue;
                  }
@@ -127,38 +155,36 @@
                      let key = format!("{}_{}", slug, t.outcome);
                      println!(
                          "FIN {:<6} {}  @ {:.4}  drop={:.1}%  hi={:.4}  tp=+{:.0}%  | {}",
-@@ -3397,6 +3464,21 @@
+@@ -3397,6 +3470,20 @@
                          cfg.tp * 100.0,
                          t.outcome
                      );
-+                    // Min. rozmiar zlecenia na CLOB = FIN_MIN_SHARES (5). Przy stawce 1$ i ask > 0.20
-+                    // zlecenie BUY nie moglo sie wypelnic -> bot chodzil, ale nie otwieral pozycji.
-+                    // Podnosimy stawke do minimum; gdy brak srodkow, pomijamy rynek (bez bledu).
-+                    let min_stake = ceil_cent(ask * FIN_MIN_SHARES * 1.02);
-+                    if min_stake > state.available_budget {
-+                        n_skip_min += 1;
-+                        if dbg {
-+                            println!(
-+                                "[FIN-SKIP] {} ask={:.4} min_stake={:.2}$ > budget={:.2}$",
-+                                slug, ask, min_stake, state.available_budget
-+                            );
-+                        }
-+                        continue;
++                    // Uwaga: rynki Finance maja w API orderMinSize=5 share'ow, ale realne
++                    // wypelnienia (live_fills.csv z 2026-10-11) pokazuja MATCHED takze dla
++                    // 3.33 share'ow ($1 przy ask 0.30), wiec NIE podnosimy stawki - tylko
++                    // logujemy przypadek pod DEBUG_CAT=1, zeby miec podglad na minima.
++                    if dbg && stake / ask < FIN_MIN_SHARES {
++                        println!(
++                            "[FIN-INFO] {} ask={:.4} stake={:.2}$ -> {:.2} share (API min {})",
++                            slug,
++                            ask,
++                            stake,
++                            stake / ask,
++                            FIN_MIN_SHARES
++                        );
 +                    }
-+                    let stake = stake.max(min_stake);
                      open_position(
                          state,
                          &key,
-@@ -3417,9 +3499,20 @@
+@@ -3417,9 +3504,19 @@
              }
          }
      }
 +    if dbg {
 +        println!(
-+            "[FIN-SUMMARY] rynkow={} sygnalow={} pominietych_min_size={} budget={:.2}$ open_pos={}",
++            "[FIN-SUMMARY] rynkow={} sygnalow={} budget={:.2}$ open_pos={}",
 +            n_markets,
 +            n_sig,
-+            n_skip_min,
 +            state.available_budget,
 +            state.positions.len()
 +        );
@@ -170,7 +196,7 @@
  // =============================================================================
  //  LIVE ORDER (SDK) - uzywane TYLKO gdy live()==true
  // =============================================================================
-@@ -3861,7 +3954,16 @@
+@@ -3861,7 +3958,16 @@
          STATS_FILE,
          state_file()
      );

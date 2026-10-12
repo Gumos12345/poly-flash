@@ -5,13 +5,28 @@ Pliki:
 - `src/main.rs` — poprawione zrodlo (do podgladu/diffu),
 - `v4-main-rs.patch` — diff wzgledem Twojej wersji v3.
 
+## Korekta po analizie `live_fills.csv` (2026-10-12)
+
+Pierwotnie zakladalem, ze bledy LIVE przy otwieraniu pozycji to `orderMinSize=5 share'ow`
+(przy stawce 1$ i ask > 0.20 nie da sie kupic 5 share'ow). **Dane uzytkownika tego nie potwierdzaja:**
+w `live_fills.csv` sa wpisy `BUY ... 1.00 ... MATCHED` z SELL po 3.33, 2.44, 1.32 share'a, czyli
+zlecenia na 1-3 share'y byly normalnie wypelniane. Dlatego:
+
+- **USUNIETE podnoszenie stawki do `ask*5`** — to zwiekszyloby pozycje 1,5-3,8x bez powodu.
+  Zostalo tylko logowanie `[FIN-INFO]` pod `DEBUG_CAT=1`.
+- Przyczyna bledow LIVE jest nadal otwarta (kandydaci: saldo/allowance, autoryzacja fundera,
+  wyczerpany budzet) — rozstrzygnie `grep -v MATCHED live_fills.csv` + log z `[LIVE ERROR]`.
+
+Dodane logowanie (do audytu, bo `live_fills.csv` nie zapisuje cen):
+```
+[LIVE OPEN ] A40_40 slug  @ 0.3100  stake=1.00$  shares=3.23
+[LIVE CLOSE] A40_40 slug  shares=3.23 entry=0.3100 bid=0.4400 pnl=+41.94% reason=TP
+```
+
 ## Co poprawione (i dlaczego)
 
-1. **Min. rozmiar zlecenia (najwazniejsze — dlatego bot „chodzil, ale nie gral").**
-   Na CLOB `orderMinSize = 5` share'ow na wszystkich rynkach Finance. Przy stawce 1$ kazdy ask
-   powyzej ~0.20 nie mogl dac 5 share'ow, wiec `BUY` byl odrzucany. Teraz stawka rosnie do
-   `max(stawka, ceil_cent(ask*5*1.02))`, a gdy brak srodkow — rynek jest pomijany (bez bledu).
-   W kodzie: `scan_finance4` + `const FIN_MIN_SHARES`.
+1. ~~**Min. rozmiar zlecenia**~~ — patrz korekta wyzej (nie podnosimy stawki).
+
 
 2. **Time-exit Finance: 2h -> 12h (konfigurowalne).**
    Na 2h backtest daje ~0%/pozycja (win ~48%), bo edge ujawnia sie pozniej:

@@ -1745,8 +1745,8 @@ async fn open_position(
     if live() {
         match live_buy(token_id, stake).await {
             Ok(()) => println!(
-                "[LIVE OPEN ] {:<3} {:<44} @ {:.4}  stake={:.2}$",
-                strategy, slug, price, stake
+                "[LIVE OPEN ] {:<3} {:<44} @ {:.4}  stake={:.2}$  shares={:.2}",
+                strategy, slug, price, stake, stake / price
             ),
             Err(e) => {
                 println!("[LIVE ERROR] {} -> {} (pozycja pominięta)", slug, e);
@@ -1770,8 +1770,14 @@ async fn close_position(state: &mut BotState, key: &str, exit_price: f64, reason
         };
         match live_sell(&pos.token_id, pos.shares).await {
             Ok(()) => println!(
-                "[LIVE CLOSE] {:<3} {:<44} shares={:.2} reason={}",
-                pos.strategy, pos.slug, pos.shares, reason
+                "[LIVE CLOSE] {:<3} {:<44} shares={:.2} entry={:.4} bid={:.4} pnl={:+.2}% reason={}",
+                pos.strategy,
+                pos.slug,
+                pos.shares,
+                pos.entry_price,
+                exit_price,
+                (exit_price - pos.entry_price) / pos.entry_price * 100.0,
+                reason
             ),
             Err(e) => {
                 let es = e.to_string();
@@ -3251,6 +3257,7 @@ fn taker_rate(kind: &str) -> f64 {
 }
 
 /// Zaokraglenie w gore do grosza (min. wartosc zlecenia liczymy ostroznie).
+#[allow(dead_code)]
 fn ceil_cent(x: f64) -> f64 {
     (x * 100.0).ceil() / 100.0
 }
@@ -3413,7 +3420,6 @@ async fn scan_finance4(
     // Iterujemy strategie w kolejnosci priorytetu. Dedup: rynek raz wziety
     // (traded_slugs) jest pomijany przez WSZYSTKIE kolejne strategie -> zero dublowania.
     let mut n_sig = 0usize;
-    let mut n_skip_min = 0usize;
     for cfg in FIN_STRATS.iter() {
         for (slug, tokens) in &parsed {
             if state.traded_slugs.contains_key(slug) {
@@ -3464,21 +3470,20 @@ async fn scan_finance4(
                         cfg.tp * 100.0,
                         t.outcome
                     );
-                    // Min. rozmiar zlecenia na CLOB = FIN_MIN_SHARES (5). Przy stawce 1$ i ask > 0.20
-                    // zlecenie BUY nie moglo sie wypelnic -> bot chodzil, ale nie otwieral pozycji.
-                    // Podnosimy stawke do minimum; gdy brak srodkow, pomijamy rynek (bez bledu).
-                    let min_stake = ceil_cent(ask * FIN_MIN_SHARES * 1.02);
-                    if min_stake > state.available_budget {
-                        n_skip_min += 1;
-                        if dbg {
-                            println!(
-                                "[FIN-SKIP] {} ask={:.4} min_stake={:.2}$ > budget={:.2}$",
-                                slug, ask, min_stake, state.available_budget
-                            );
-                        }
-                        continue;
+                    // Uwaga: rynki Finance maja w API orderMinSize=5 share'ow, ale realne
+                    // wypelnienia (live_fills.csv z 2026-10-11) pokazuja MATCHED takze dla
+                    // 3.33 share'ow ($1 przy ask 0.30), wiec NIE podnosimy stawki - tylko
+                    // logujemy przypadek pod DEBUG_CAT=1, zeby miec podglad na minima.
+                    if dbg && stake / ask < FIN_MIN_SHARES {
+                        println!(
+                            "[FIN-INFO] {} ask={:.4} stake={:.2}$ -> {:.2} share (API min {})",
+                            slug,
+                            ask,
+                            stake,
+                            stake / ask,
+                            FIN_MIN_SHARES
+                        );
                     }
-                    let stake = stake.max(min_stake);
                     open_position(
                         state,
                         &key,
@@ -3501,10 +3506,9 @@ async fn scan_finance4(
     }
     if dbg {
         println!(
-            "[FIN-SUMMARY] rynkow={} sygnalow={} pominietych_min_size={} budget={:.2}$ open_pos={}",
+            "[FIN-SUMMARY] rynkow={} sygnalow={} budget={:.2}$ open_pos={}",
             n_markets,
             n_sig,
-            n_skip_min,
             state.available_budget,
             state.positions.len()
         );
