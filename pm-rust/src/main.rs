@@ -3545,7 +3545,15 @@ async fn live_buy(token_id: &str, usd: f64) -> Result<()> {
         .map_err(|_| anyhow!("brak POLYMARKET_PRIVATE_KEY w srodowisku"))?;
     let host = std::env::var("CLOB_API_URL").unwrap_or_else(|_| CLOB_HOST_DEFAULT.to_string());
 
-    let signer = LocalSigner::from_str(&pk)?.with_chain_id(Some(POLYGON));
+    let pk_clean = pk.trim();
+    if pk_clean.len() != 66 || !pk_clean.starts_with("0x") {
+        return Err(anyhow!(
+            "POLYMARKET_PRIVATE_KEY ma zly format: dlugosc {} znakow (oczekiwane 66 = 0x + 64 hex). \
+             Usun spacje/cudzyslowy z ~/.poly_env (np. sed -i -E 's/[[:space:]]+$//' ~/.poly_env)",
+            pk_clean.len()
+        ));
+    }
+    let signer = LocalSigner::from_str(pk_clean)?.with_chain_id(Some(POLYGON));
 
     // Auto-resolucja: (sig_type, funder) z klucza prywatnego (EOA -> Deposit Wallet).
     let (sig_num, funder) = auth_params().await;
@@ -3665,7 +3673,15 @@ async fn live_sell(token_id: &str, shares: f64) -> Result<()> {
         .map_err(|_| anyhow!("brak POLYMARKET_PRIVATE_KEY w srodowisku"))?;
     let host = std::env::var("CLOB_API_URL").unwrap_or_else(|_| CLOB_HOST_DEFAULT.to_string());
 
-    let signer = LocalSigner::from_str(&pk)?.with_chain_id(Some(POLYGON));
+    let pk_clean = pk.trim();
+    if pk_clean.len() != 66 || !pk_clean.starts_with("0x") {
+        return Err(anyhow!(
+            "POLYMARKET_PRIVATE_KEY ma zly format: dlugosc {} znakow (oczekiwane 66 = 0x + 64 hex). \
+             Usun spacje/cudzyslowy z ~/.poly_env (np. sed -i -E 's/[[:space:]]+$//' ~/.poly_env)",
+            pk_clean.len()
+        ));
+    }
+    let signer = LocalSigner::from_str(pk_clean)?.with_chain_id(Some(POLYGON));
 
     // Auto-resolucja: (sig_type, funder) z klucza prywatnego (EOA -> Deposit Wallet).
     let (sig_num, funder) = auth_params().await;
