@@ -1,0 +1,24 @@
+// ======================================================================================
+//  pm-rust  --  Polymarket bot (DRY RUN):  SPORTY LIVE  +  CRYPTO
+// --------------------------------------------------------------------------------
+//  Strategie:
+//    S5  - 5m  REBOUND     (crypto {asset}-updown-5m-<ts>)  -> kup "Up" po spadku
+//    S6  - 15m REBOUND     (crypto {asset}-updown-15m-<ts>) -> kup "Up" po spadku
+//    S7  - 1h  REBOUND     (crypto {name}-up-or-down-<date>-<h>-et)
+//    S8  - 4h  REBOUND     (crypto {asset}-updown-4h-<ts>)
+//    S9  - 1d  REBOUND     (crypto {name}-up-or-down-on-<date>)
+//    S4  - 15m VOLUME SPIKE(crypto {asset}-updown-15m-<ts>)  [WYLACZONE]
+//    S3  - MOMENTUM SCALP  (crypto, referencja Kraken)
+//    S2  - MEAN REVERSION  (rynki wysokiego wolumenu: polityka/sport/inne)
+//    SPT - LIVE SPORTY     (Gamma tag_id=1&live=true) -> mean reversion
+//    CAT - 6 KATEGORII     (Finals/Tech/Esports/Politics/Weather/Culture, DSOP40)
+//
+//  Domyslnie DRY RUN (paper trading).  LIVE tylko gdy:
+///        LIVE=1  ORAZ  CONFIRM_LIVE=I_UNDERSTAND_TH_RISK//
+//  Pliki wyjsciowe DRY RUN:
+//        dry_trades.csv     - historia transakcj//        dry_stats.txt      - statystyki
+//        positions_dry.json - otwarte pozycje
+// =======================================================================================
+
+use std::collections::HashMap;
+use std::fs::{self, OpenOptions
