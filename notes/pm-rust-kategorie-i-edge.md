@@ -77,3 +77,33 @@ Test powtarzalny: `notes/edge-test-btc.js` (pobiera klines z data.binance.vision
 - wlasne repo: https://github.com/Gumos12345/poly-flash/upload/main (PUBLICZNE!) albo nowe prywatne:
   https://github.com/new -> nazwa `pm-rust`, Private -> upload plikow -> link (mam dostep do repo uzytkownika)
 - UWAGA: nie wysylac `~/.poly_env` ani klucza prywatnego na zadne publiczne paste/gist/repo.
+
+
+## 6. Replikacja backtestu z ekranow uzytkownika (2026-10-12)
+Uzytkownik dostal (od innego narzedzia) tabelke: okno 6h, -40/+40 -> win 75,8% / ROI +21,3%,
+-30/+30 -> win 75,4% / ROI +14,2%, wejsc 3,4-5,8/h. Sprawdzone wlasnym backtestem z realnych danych.
+
+Metoda (`notes/replikacja-backtestu-finance.js`):
+- Gamma: wszystkie rynki tag_id=120 (Finance), limit 100: 1000 zamknietych + 500 otwartych = 1500, z tego 1442 z historia,
+- CLOB `prices-history?interval=max&fidelity=1` = ostatnie 30 dni, ~4300 punktow (~10-min probkowanie),
+- sygnal: cena spadla o X% w ciagu 6h; wejscie w cenie z historii; wyjscie: TP +X%, SL -90%, time-exit 2h,
+- brak spreadu, brak oplat, "win" = PnL > 0.
+
+Wyniki:
+| konfiguracja | sygnaly | win | ROI/pozycja (brutto) | TP/SL/time-exit |
+|---|---|---|---|---|
+| 6h, -40/+40 | 16096 | 48,3% | +9,53% | 4646 / 2 / 11448 |
+| 6h, -30/+30 | 33880 | 49,4% | +7,40% | 10291 / 5 / 23584 |
+
+Przy probkowaniu 1h (fidelity=60) win spada do ~36% a ROI do +1,7-1,9% -> wynik jest bardzo
+wrazliwy na rozdzielczosc danych. Wniosek: tabelka 73-76% winrate / +12-21% ROI NIE replikuje sie.
+
+Kluczowe zastrzezenia do tych +9,5%:
+1. Fee: Finance 0,04 => `fee=C*0,04*p*(1-p)` => ok. 2-4% wartosci pozycji na strone (przy p~0,2:
+   3,2% kupno + ~2,9% sprzedaz) => netto ok. -2% do +2%.
+2. Spread: MAX_SPREAD=0.05 to przy share za 0,20-0,50 koszt 2-5c = 10-25% ceny; 0.05 "przepuszcza"
+   koszt wiekszy niz TP.
+3. SL -90% praktycznie nigdy nie dziala (2 wystapienia na 16096) => pozycja zyje do time-exit 2h.
+4. Historia CLOB w illiquid rynkach to czesto ostatni trade/quote, nie ksiazka => te ceny nie sa
+   wykonywalne (brak plynnosci na tych poziomach). To najprawdopodobniejsza przyczyna zawyzenia.
+5. Tylko 30 dni historii (API) i brak danych o tym, czy backtest uwzglednil filtry bota.
