@@ -1,5 +1,5 @@
 --- /tmp/orig_main.rs	2026-10-12 11:15:09.530203653 +0000
-+++ src/main.rs	2026-10-12 11:27:12.374188697 +0000
++++ src/main.rs	2026-10-12 11:38:29.482175397 +0000
 @@ -1676,8 +1676,15 @@
      if stake < STAKE_USD_MIN {
          return;
@@ -81,7 +81,7 @@
          if bid >= tp_price {
              close_position(state, &key, bid, "TP", now).await;
          } else if bid <= sl_price {
-@@ -3195,6 +3218,50 @@
+@@ -3195,6 +3218,49 @@
  ];
  const FIN_SL: f64 = 0.90;
  const FIN_MAX_PER_STRATEGY: usize = 10;
@@ -128,11 +128,10 @@
 +fn ceil_cent(x: f64) -> f64 {
 +    (x * 100.0).ceil() / 100.0
 +}
-+const FIN_MAX_PER_STRATEGY: usize = 10;
  
  // ===========================================================================
  //  BOOTSTRAP HISTORII 6h: przy starcie (i dla nowych tokenow) wczytujemy ostatnie 6h
-@@ -3352,6 +3419,7 @@
+@@ -3352,6 +3418,7 @@
  
      // Iterujemy strategie w kolejnosci priorytetu. Dedup: rynek raz wziety
      // (traded_slugs) jest pomijany przez WSZYSTKIE kolejne strategie -> zero dublowania.
@@ -140,7 +139,7 @@
      for cfg in FIN_STRATS.iter() {
          for (slug, tokens) in &parsed {
              if state.traded_slugs.contains_key(slug) {
-@@ -3383,9 +3451,14 @@
+@@ -3383,9 +3450,14 @@
                  if ask < CAT_MIN_PRICE || ask > CAT_MAX_PRICE {
                      continue;
                  }
@@ -155,7 +154,7 @@
                      let key = format!("{}_{}", slug, t.outcome);
                      println!(
                          "FIN {:<6} {}  @ {:.4}  drop={:.1}%  hi={:.4}  tp=+{:.0}%  | {}",
-@@ -3397,6 +3470,20 @@
+@@ -3397,6 +3469,20 @@
                          cfg.tp * 100.0,
                          t.outcome
                      );
@@ -176,7 +175,7 @@
                      open_position(
                          state,
                          &key,
-@@ -3417,9 +3504,19 @@
+@@ -3417,9 +3503,19 @@
              }
          }
      }
@@ -196,7 +195,7 @@
  // =============================================================================
  //  LIVE ORDER (SDK) - uzywane TYLKO gdy live()==true
  // =============================================================================
-@@ -3861,7 +3958,16 @@
+@@ -3861,7 +3957,16 @@
          STATS_FILE,
          state_file()
      );

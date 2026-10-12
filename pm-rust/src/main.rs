@@ -3261,7 +3261,6 @@ fn taker_rate(kind: &str) -> f64 {
 fn ceil_cent(x: f64) -> f64 {
     (x * 100.0).ceil() / 100.0
 }
-const FIN_MAX_PER_STRATEGY: usize = 10;
 
 // ===========================================================================
 //  BOOTSTRAP HISTORII 6h: przy starcie (i dla nowych tokenow) wczytujemy ostatnie 6h
