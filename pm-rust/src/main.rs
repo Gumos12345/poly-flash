@@ -1749,7 +1749,27 @@ async fn open_position(
                 strategy, slug, price, stake, stake / price
             ),
             Err(e) => {
-                println!("[LIVE ERROR] {} -> {} (pozycja pominięta)", slug, e);
+                // Diagnostyka: pelny lancuch bledu + parametry autoryzacji uzyte do podpisu.
+                // (blad "invalid string length" przychodzi z CLOB/SDK - prawie zawsze znaczy
+                //  niezgodnosc funder/sig_type z portfelem, z ktorego zrobiono API KEY)
+                #[cfg(feature = "live")]
+                {
+                    let (st, fu) = auth_params().await;
+                    println!(
+                        "[LIVE ERROR] {} -> {} | debug={:?} | sig_type={} funder={}",
+                        slug,
+                        e,
+                        e,
+                        st,
+                        fu.unwrap_or_else(|| "(brak)".to_string())
+                    );
+                }
+                #[cfg(not(feature = "live"))]
+                println!("[LIVE ERROR] {} -> {} | debug={:?}", slug, e, e);
+                println!(
+                    "[LIVE SKIP ] {} (stake={:.2}$, ask={:.4}) - pozycja pominięta",
+                    slug, stake, price
+                );
                 return;
             }
         }
