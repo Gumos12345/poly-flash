@@ -14,10 +14,27 @@ pip install requests
 
 ## 2. Pobranie bota
 
+> `raw.githubusercontent.com` potrafi podawać **starą wersję z cache** (dlatego `--explain`
+> może "nie istnieć"). Pobieraj przez API GitHuba — to zawsze aktualna wersja:
+
 ```bash
 mkdir -p ~/polybot && cd ~/polybot
-curl -sSLO https://raw.githubusercontent.com/Gumos12345/poly-flash/cline/p2eft749/bot_v2_dry_v3.py
-python bot_v2_dry_v3.py --report      # test: powinno wypisać "brak otwartych pozycji"
+curl -fsSL -H 'Accept: application/vnd.github.raw' \
+  "https://api.github.com/repos/Gumos12345/poly-flash/contents/bot_v2_dry_v3.py?ref=cline/p2eft749" \
+  -o bot_v2_dry_v3.py
+
+# weryfikacja, że masz aktualną wersję (musi wypisać 3 flagi):
+python bot_v2_dry_v3.py --help | grep -E 'explain|pre-hours|max-hours'
+python bot_v2_dry_v3.py --report      # test: "brak otwartych pozycji"
+```
+
+Podgląd na żywo (opcjonalny skrypt):
+
+```bash
+curl -fsSL -H 'Accept: application/vnd.github.raw' \
+  "https://api.github.com/repos/Gumos12345/poly-flash/contents/podglad.sh?ref=cline/p2eft749" \
+  -o podglad.sh
+chmod +x podglad.sh
 ```
 
 ## 3. Dry run (bez prawdziwych pieniędzy)
@@ -33,6 +50,8 @@ python bot_v2_dry_v3.py --pre-hours 19 --max-hours 26 --once --tags nba
 
 nohup python bot_v2_dry_v3.py --dry > dry.log 2>&1 &
 tail -f dry.log                       # podgląd na żywo (Ctrl+C zamyka tylko podgląd)
+# albo ładniejszy podgląd: log + PnL, odświeżanie co 60 s
+./podglad.sh
 ```
 
 Rano:
