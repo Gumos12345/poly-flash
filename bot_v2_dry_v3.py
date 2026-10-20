@@ -58,6 +58,7 @@ import math
 import os
 import re
 import statistics
+import threading
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -179,6 +180,7 @@ FETCH_HISTORY_PAGES = 15   # ile stron eventow (x100) na tag przy budowie bt_cac
 FETCH_HISTORY_FIDELITY = 5  # rozdzielczosc historii cen (minuty); 1 = 1 min (duzo danych)
 BT_MIN_VOL = 5000.0          # backtest: pomijaj rynki z wolumenem < 5k (nieplynne ligi)
 BT_BY_TAG = False            # True -> rozbicie wyniku per liga (ustawiane przez --by-tag)
+BT_USE_POLICY = True         # backtest stosuje te sama polityke grup/lig co live
 
 TRADING_MARKET_GROUP = "spread"      # zachowane dla kompatybilnoï¿½ci starszych raportï¿½w
 ONE_POSITION_PER_EVENT = False       # wiele rï¿½ï¿½nych rynkï¿½w z jednego eventu
@@ -576,7 +578,7 @@ def _timing_ok_strict(gs, t, timing_filter):
         return 0 < gs - t <= PRE_GAME_WINDOW_H * 3600.0
     if timing_filter == "live":
         return 0 <= t - gs <= LIVE_WINDOW_H * 3600.0
-    return True
+    return False          # "post" = po oknie live -> live nie wchodzi, wiec backtest tez nie
 
 
 def _gamma_outcome_price(slug, idx):
@@ -906,10 +908,15 @@ def _sim_yes_threshold(m, no_lo, fee_rate, spread, notional, timing_filter):
     Wyjï¿½cie: hold do rozstrzygniï¿½cia. Zwraca dict albo None.
     """
     gs = _ts(m.get("game_start"))
+    final_yes = m.get("final_yes")
+    if final_yes is None or 0.01 < final_yes < 0.99:
+        return None       # rynek anulowany/niepewny: live robi zwrot, nie liczymy jako przegrana
     for t, p in m["history"]:
         no = 1.0 - p
         if no < no_lo:
             continue
+        if no > 1.0 - LONG_LO:
+            continue      # YES < LONG_LO -> poza pasmem live (0.15-0.50), nie handlujemy
         if not _timing_ok_strict(gs, t, timing_filter):
             continue
         if not _same_day_ok(m, ref_ts=t, gs=gs):
@@ -917,16 +924,33 @@ def _sim_yes_threshold(m, no_lo, fee_rate, spread, notional, timing_filter):
         cost = no + taker_fee(1.0, no, fee_rate) + spread / 2.0
         if cost <= 0 or cost >= 1:
             return None
-        payout = 1.0 if m["final_yes"] < 0.5 else 0.0
+        payout = 1.0 if final_yes < 0.5 else 0.0
         return {"entry_no": no, "entry_t": t, "cost": cost, "payout": payout,
                 "pnl_pct": (payout - cost) / cost * 100.0,
                 "pnl_usd": (payout - cost) * (notional / cost)}
     return None
 
 
+def _bt_policy_ok(m, timing):
+    """Ta sama polityka co live: dozwolone grupy rynku per liga, live tylko dla soccer."""
+    sports = {t for t in (m.get("source_tags") or [])
+              if t in PRE_MARKET_POLICY or t in SOCCER_TAGS}
+    sports = {t for t in sports if t not in BLOCKED_SPORT_TAGS}
+    if not sports:
+        return False
+    group = m.get("group") or "other"
+    if timing == "live":
+        return any(t in SOCCER_TAGS for t in sports) and group in LIVE_SOCCER_MARKETS
+    if timing == "pre":
+        return any(group in PRE_MARKET_POLICY.get(t, set()) for t in sports)
+    return False
+
+
 def _backtest_run(markets, no_lo, timing_filter, notional=SIZE_USD):
     trades = []
     for m in markets:
+        if BT_USE_POLICY and not _bt_policy_ok(m, timing_filter):
+            continue
         fee_rate = fee_for_tag(",".join(m.get("source_tags") or ["sports"]))
         tr = _sim_yes_threshold(m, no_lo, fee_rate, ASSUMED_SPREAD, notional, timing_filter)
         if tr:
@@ -962,6 +986,7 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
     tags = expand_tags(tags)
     cutoff = time.time() - days * 86400
     seen, items = set(), []
+    void_n = 0
     per_tag = max(50, max_markets // max(1, len(tags)))   # zeby kazdy tag cos wniosl
     for tag in tags:
         tag_n = 0
@@ -991,8 +1016,11 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
                         final_yes = float(prices[m["yes_idx"]])
                     except (IndexError, TypeError, ValueError):
                         continue
+                    if 0.01 < final_yes < 0.99:
+                        void_n += 1
+                        continue          # anulowany (0.5/0.5) - live robi zwrot
                     items.append({"slug": slug, "event": ev.get("slug"), "game_start": gs,
-                                  "final_yes": final_yes, "source_tags": [tag],
+                                  "final_yes": final_yes, "source_tags": [tag], "group": _market_group(m),
                                   "pair_mode": m["pair_mode"], "volume": float(m.get("volume") or 0.0),
                                   "yes_token": m["yes_token"]})
                     tag_n += 1
@@ -1004,6 +1032,10 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
                 break
         print(f"[{tag}] +{tag_n} rynkow (razem {len(items)})")
 
+    done = {"n": 0}
+    lock = threading.Lock()
+    target = len(items)
+
     def _hist(it):
         """Historia przycieta do okna, ktore strategia moze wykorzystac: [start-3h, start+7h]."""
         gs = it.get("game_start")
@@ -1013,12 +1045,18 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
             hi = gs + (LIVE_WINDOW_H + 1) * 3600.0
             hist = [(t, pr) for t, pr in hist if lo <= t <= hi]
         it["history"] = hist
+        with lock:
+            done["n"] += 1
+            if done["n"] % 100 == 0 or done["n"] == target:
+                print(f"  historia cen: {done['n']}/{target}")
         return it
 
     with ThreadPoolExecutor(10) as pool:
         items = list(pool.map(_hist, items))
     items = [it for it in items if it["history"]]
     _save(out, items)
+    if void_n:
+        print(f"pominieto {void_n} rynkow anulowanych (0.5/0.5)")
     print(f"zapisano {len(items)} rynkow do {out} (ostatnie {days} dni)")
     return items
 
@@ -1035,6 +1073,10 @@ def run_backtest():
     cache = [m for m in cache if float(m.get("volume") or 0.0) >= BT_MIN_VOL]
     print(f"rynkow w cache: {total} | po filtrze plynnosci (vol >= {BT_MIN_VOL:.0f}): {len(cache)}"
           f" | spread wejscia: {ASSUMED_SPREAD:.3f}")
+    if BT_USE_POLICY:
+        n_pre = sum(1 for m in cache if _bt_policy_ok(m, "pre"))
+        n_live = sum(1 for m in cache if _bt_policy_ok(m, "live"))
+        print(f"rynkow zgodnych z polityka: pre={n_pre} live={n_live} (z {len(cache)})")
     if not cache:
         print("brak rynkow po filtrze - zmniejsz BT_MIN_VOL albo pobierz wiecej danych")
         return
@@ -1256,6 +1298,8 @@ def main():
     ap.add_argument("--pre-hours", type=float, default=None,
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
     ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
+    ap.add_argument("--no-policy", action="store_true",
+                    help="backtest bez filtra polityki (grupy/ligi) - do porownan")
     ap.add_argument("--bt-min-vol", type=float, default=None,
                     help="backtest: min. wolumen rynku (domyslnie 5000; 1000 = wiecej rynkow)")
     ap.add_argument("--assumed-spread", type=float, default=None,
@@ -1277,6 +1321,10 @@ def main():
         PRE_GAME_WINDOW_H = float(args.pre_hours)
         _is_pre_game.__defaults__ = (PRE_GAME_WINDOW_H,)
         print(f"[test] okno pre-game = {PRE_GAME_WINDOW_H} h")
+    if args.no_policy:
+        global BT_USE_POLICY
+        BT_USE_POLICY = False
+        print("[test] backtest BEZ filtra polityki")
     if args.bt_min_vol is not None:
         global BT_MIN_VOL
         BT_MIN_VOL = float(args.bt_min_vol)
