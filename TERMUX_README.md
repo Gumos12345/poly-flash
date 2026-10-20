@@ -104,3 +104,15 @@ nohup python -u bot_v2_dry_v3.py --dry > dry.log 2>&1 &
 
 Stare pliki JSON zostaw jako `.v1` — były liczone po cenie BID (patrz changelog w pliku),
 więc ich PnL był zawyżony i nie mieszamy ich z nowymi danymi.
+
+## 8. Monitor do pliku (monitor.log)
+
+```bash
+cd ~/polybot
+curl -fsSL -H 'Accept: application/vnd.github.raw' \\
+  "https://api.github.com/repos/Gumos12345/poly-flash/contents/monitor.sh?ref=cline/p2eft749" \\
+  -o monitor.sh
+chmod +x monitor.sh
+nohup ./monitor.sh > /dev/null 2>&1 &   # co 5 min dopisuje status + raport do monitor.log
+tail -f monitor.log
+```
