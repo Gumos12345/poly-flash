@@ -48,7 +48,7 @@ python bot_v2_dry_v3.py --once         # jeden przebieg: otwórz pozycje + PnL
 # test "czy w ogóle kupuje" bez czekania na okno 2 h (poszerzone okna tylko na ten przebieg):
 python bot_v2_dry_v3.py --pre-hours 19 --max-hours 26 --once --tags nba
 
-nohup python bot_v2_dry_v3.py --dry > dry.log 2>&1 &
+nohup python -u bot_v2_dry_v3.py --dry > dry.log 2>&1 &
 tail -f dry.log                       # podgląd na żywo (Ctrl+C zamyka tylko podgląd)
 # albo ładniejszy podgląd: log + PnL, odświeżanie co 60 s
 ./podglad.sh
@@ -89,3 +89,18 @@ zabija proces po kilkunastu minutach snu i w logu zobaczysz tylko ostatni wpis.
 * `SAME_CALENDAR_DAY = False` — gdy ustawisz `True`, bot dodatkowo wymaga, żeby
   rozliczenie wypadło przed lokalną północą (UTC+2 w Polsce). To wycina mecze NBA
   startujące po ~19:30 czasu polskiego.
+
+## 7. Restart po aktualizacji pliku (i po poprawce cen ask/bid)
+
+```bash
+cd ~/polybot
+pkill -f bot_v2_dry_v3.py
+mv positions_v2_dry.json positions_v2_dry.v1.json 2>/dev/null   # archiwum starych pozycji
+mv trades_v2_dry.json trades_v2_dry.v1.json 2>/dev/null
+# ... podmien plik bot_v2_dry_v3.py (patrz punkt 2) ...
+nohup python -u bot_v2_dry_v3.py --dry > dry.log 2>&1 &
+./podglad.sh
+```
+
+Stare pliki JSON zostaw jako `.v1` — były liczone po cenie BID (patrz changelog w pliku),
+więc ich PnL był zawyżony i nie mieszamy ich z nowymi danymi.

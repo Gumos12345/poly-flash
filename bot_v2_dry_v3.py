@@ -41,7 +41,12 @@ Zmiany v3 wzgledem v2:
   * _ts() przyjmuje tez timestampy liczbowe (wczesniej gs=None w backtescie -> 0 tradow).
   * --fetch-history: buduje bt_cache2.json (w repo nie bylo ani cache, ani fetch_history.py,
     wiec --backtest nie mial na czym pracowac).
-  * --once i --report.
+  * --once i --report, --explain, --pre-hours, --max-hours.
+  * KOREKTA CEN: CLOB /price ma ODWROCONA semantyke parametru side — /price?side=sell
+    zwraca best ASK, a /price?side=buy best BID (sprawdzone na zywym API). v2 kupowal
+    po BID (za tanio) i wycenial pozycje po ASK (za drogo) -> dry PnL byl zawyzony.
+    v3 ma get_ask()/get_bid() i wycenia po mid, z fallbackiem na cene Gamma przy pustym booku.
+  * Log nie jest buforowany przy przekierowaniu do pliku (sys.stdout line_buffering).
 """
 
 
@@ -56,6 +61,11 @@ import statistics
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+
+try:                      # log ma sie pojawiac od razu takze przy przekierowaniu do pliku
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 try:
     import requests
@@ -282,8 +292,19 @@ def get_price_history(token_id: str, fidelity: int = 1):
         return []
 
 
+def get_ask(token_id: str) -> float:
+    """Cena KUPNA = best ASK. UWAGA: CLOB ma odwrotna semantyke parametru side:
+    /price?side=sell zwraca best ASK, /price?side=buy zwraca best BID (sprawdzone na zywym API)."""
+    return get_price(token_id, "sell")
+
+
+def get_bid(token_id: str) -> float:
+    """Cena SPRZEDAZY (wycena pozycji) = best BID -> /price?side=buy."""
+    return get_price(token_id, "buy")
+
+
 def get_price(token_id: str, side: str = "buy"):
-    """Best ask (side=buy) lub best bid (side=sell) z /price."""
+    """Best price z /price. side="buy" -> best BID, side="sell" -> best ASK (tak dziala CLOB)."""
     try:
         r = requests.get(f"{CLOB_HOST}/price",
                          params={"token_id": token_id, "side": side}, timeout=15)
@@ -556,13 +577,46 @@ def _timing_ok_strict(gs, t, timing_filter):
     return True
 
 
+def _gamma_outcome_price(slug, idx):
+    """Cena wskazujaca z Gamma (outcomePrices[idx]) - fallback przy pustym order booku."""
+    try:
+        data = requests.get(f"{GAMMA_HOST}/markets", params={"slug": slug}, timeout=15).json()
+        m = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+        if not m:
+            return None
+        prices = _j(m.get("outcomePrices")) or []
+        if idx is None or idx >= len(prices):
+            return None
+        return float(prices[idx])
+    except Exception:
+        return None
+
+
+def _position_mark(pos):
+    """
+    Rozsadna wycena 1 share:
+      * bid > 0 i ask < 1  -> srodek spreadu (mid)
+      * tylko bid          -> bid
+      * pusty book (0 / 1) -> cena z Gamma, a gdy jej brak -> cena wejscia
+    Bez tego pusty book dawal falszywe -100% (bid=0) albo +100% (ask=1).
+    """
+    bid = get_bid(pos["no_token"])
+    ask = get_ask(pos["no_token"])
+    if bid > 0 and 0 < ask < 1.0:
+        return (bid + ask) / 2.0
+    if bid > 0:
+        return bid
+    gamma = _gamma_outcome_price(pos["slug"], pos.get("no_idx"))
+    if gamma is not None and 0 < gamma < 1:
+        return gamma
+    return pos["entry_no"]
+
+
 def _mark_positions(positions):
-    """Wycena otwartych pozycji po best bid na NO (mark-to-market, USD)."""
+    """PnL niezrealizowany (mark-to-market) po wycenie z _position_mark."""
     unreal = 0.0
     for pos in positions.values():
-        bid = get_price(pos["no_token"], "sell")
-        value = pos["shares"] * bid if bid > 0 else pos["usd"]
-        unreal += value - pos["usd"]
+        unreal += pos["shares"] * _position_mark(pos) - pos["usd"]
     return unreal
 
 
@@ -698,7 +752,7 @@ class DryBroker:
         self.dry = dry
 
     def buy_no(self, token_id, usd, limit_price, tick, fee_rate):
-        ask = get_price(token_id, "buy")
+        ask = get_ask(token_id)
         if ask <= 0:
             return {"ok": False, "err": "brak ask"}
         if ask > limit_price:
@@ -760,16 +814,16 @@ def _entry_prices(m):
     Zwraca None, gdy brak danych z CLOB.
     """
     if m.get("pair_mode"):
-        a = get_price(m["outcome_tokens"][0][1], "buy")
-        b = get_price(m["outcome_tokens"][1][1], "buy")
+        a = get_ask(m["outcome_tokens"][0][1])
+        b = get_ask(m["outcome_tokens"][1][1])
         if a <= 0 or b <= 0:
             return None
         if a <= b:
             return a, m["outcome_tokens"][1][1], b, 1
         return b, m["outcome_tokens"][0][1], a, 0
-    yes_price = get_price(m["yes_token"], "buy")
+    yes_price = get_ask(m["yes_token"])
     no_token = m["no_token"]
-    no_ask = get_price(no_token, "buy")
+    no_ask = get_ask(no_token)
     if yes_price <= 0 or no_ask <= 0:
         return None
     return yes_price, no_token, no_ask, m.get("no_idx")
@@ -1142,12 +1196,13 @@ def run_report(dry=True):
     print(f"== RAPORT {'DRY' if dry else 'LIVE'} ==")
     unreal = 0.0
     for key, pos in positions.items():
-        bid = get_price(pos["no_token"], "sell")
-        value = pos["shares"] * bid if bid > 0 else pos["usd"]
-        u = value - pos["usd"]
+        bid = get_bid(pos["no_token"])
+        ask = get_ask(pos["no_token"])
+        mark = _position_mark(pos)
+        u = pos["shares"] * mark - pos["usd"]
         unreal += u
-        print(f"  OTWARTA {pos['slug'][:55]:55s} NO={pos['entry_no']:.3f} bid={bid:.3f} "
-              f"shares={pos['shares']:.2f} koszt=${pos['usd']:.2f} PnL={u:+.2f}")
+        print(f"  OTWARTA {pos['slug'][:46]:46s} NO={pos['entry_no']:.3f} bid={bid:.3f} ask={ask:.3f} "
+              f"mark={mark:.3f} shares={pos['shares']:.2f} koszt=${pos['usd']:.2f} PnL={u:+.2f}")
     if not positions:
         print("  (brak otwartych pozycji)")
     pnl = sum(t["pnl_usd"] for t in trades)
