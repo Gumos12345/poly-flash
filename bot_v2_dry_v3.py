@@ -178,6 +178,7 @@ MARKETS_CACHE_TTL = 300.0            # sekundy waï¿½noï¿½ci cache rynkï¿
 FETCH_HISTORY_PAGES = 15   # ile stron eventow (x100) na tag przy budowie bt_cache
 FETCH_HISTORY_FIDELITY = 5  # rozdzielczosc historii cen (minuty); 1 = 1 min (duzo danych)
 BT_MIN_VOL = 5000.0          # backtest: pomijaj rynki z wolumenem < 5k (nieplynne ligi)
+BT_BY_TAG = False            # True -> rozbicie wyniku per liga (ustawiane przez --by-tag)
 
 TRADING_MARKET_GROUP = "spread"      # zachowane dla kompatybilnoï¿½ci starszych raportï¿½w
 ONE_POSITION_PER_EVENT = False       # wiele rï¿½ï¿½nych rynkï¿½w z jednego eventu
@@ -1025,7 +1026,8 @@ def run_backtest():
         return
     total = len(cache)
     cache = [m for m in cache if float(m.get("volume") or 0.0) >= BT_MIN_VOL]
-    print(f"rynkow w cache: {total} | po filtrze plynnosci (vol >= {BT_MIN_VOL:.0f}): {len(cache)}")
+    print(f"rynkow w cache: {total} | po filtrze plynnosci (vol >= {BT_MIN_VOL:.0f}): {len(cache)}"
+          f" | spread wejscia: {ASSUMED_SPREAD:.3f}")
     if not cache:
         print("brak rynkow po filtrze - zmniejsz BT_MIN_VOL albo pobierz wiecej danych")
         return
@@ -1038,6 +1040,14 @@ def run_backtest():
             if r["n"] >= 20 and (best is None or r["ev"] > best[2]):
                 best = (timing, no_lo, r["ev"], r["n"], r["wr"], r["pnl"])
     print()
+    if BT_BY_TAG and best:
+        print(f"PER LIGA (wariant timing={best[0]} NO>={best[1]:.2f}):")
+        for tag in sorted({t for m in cache for t in (m.get("source_tags") or [])}):
+            sub = [m for m in cache if tag in (m.get("source_tags") or [])]
+            r = _backtest_run(sub, best[1], best[0])
+            print(f"  {tag:12s} n={r['n']:4d} wr={r['wr']:6.2f}% "
+                  f"EV={r['ev']:+7.2f}% PnL={r['pnl']:+8.2f} USD")
+        print()
     if best:
         print(f"NAJLEPSZY (n>=20): timing={best[0]} NO>={best[1]:.2f} "
               f"EV={best[2]:+.2f}% n={best[3]} wr={best[4]:.2f}% PnL={best[5]:+.2f} USD")
@@ -1238,6 +1248,9 @@ def main():
     ap.add_argument("--explain", action="store_true", help="pokaz powody odrzucania rynkow")
     ap.add_argument("--pre-hours", type=float, default=None,
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
+    ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
+    ap.add_argument("--assumed-spread", type=float, default=None,
+                    help="nadpisz ASSUMED_SPREAD w backtescie (test wrazliwosci, np. 0.04)")
     ap.add_argument("--max-hours", type=float, default=None,
                     help="nadpisz MAX_HOURS_TO_RESOLVE na ten przebieg (test same-day)")
     ap.add_argument("--once", action="store_true", help="jeden przebieg: otworz pozycje i pokaz PnL")
@@ -1255,6 +1268,13 @@ def main():
         PRE_GAME_WINDOW_H = float(args.pre_hours)
         _is_pre_game.__defaults__ = (PRE_GAME_WINDOW_H,)
         print(f"[test] okno pre-game = {PRE_GAME_WINDOW_H} h")
+    if args.by_tag:
+        global BT_BY_TAG
+        BT_BY_TAG = True
+    if args.assumed_spread:
+        global ASSUMED_SPREAD
+        ASSUMED_SPREAD = float(args.assumed_spread)
+        print(f"[test] ASSUMED_SPREAD = {ASSUMED_SPREAD}")
     if args.max_hours:
         global MAX_HOURS_TO_RESOLVE
         MAX_HOURS_TO_RESOLVE = float(args.max_hours)
