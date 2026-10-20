@@ -181,6 +181,7 @@ FETCH_HISTORY_FIDELITY = 5  # rozdzielczosc historii cen (minuty); 1 = 1 min (du
 BT_MIN_VOL = 5000.0          # backtest: pomijaj rynki z wolumenem < 5k (nieplynne ligi)
 BT_BY_TAG = False            # True -> rozbicie wyniku per liga (ustawiane przez --by-tag)
 BT_USE_POLICY = True         # backtest stosuje te sama polityke grup/lig co live
+BT_ONE_PER_EVENT = False     # True: max 1 transakcja na mecz (linie spreadu sa skorelowane)
 
 TRADING_MARKET_GROUP = "spread"      # zachowane dla kompatybilnoï¿½ci starszych raportï¿½w
 ONE_POSITION_PER_EVENT = False       # wiele rï¿½ï¿½nych rynkï¿½w z jednego eventu
@@ -963,7 +964,11 @@ def _bt_policy_ok(m, timing):
 
 def _backtest_run(markets, no_lo, timing_filter, notional=SIZE_USD):
     trades = []
+    seen_events = set()
     for m in markets:
+        ev = m.get("event") or m.get("slug")
+        if BT_ONE_PER_EVENT and ev in seen_events:
+            continue
         if BT_USE_POLICY and not _bt_policy_ok(m, timing_filter):
             continue
         fee_rate = fee_for_tag(",".join(m.get("source_tags") or ["sports"]))
@@ -971,6 +976,7 @@ def _backtest_run(markets, no_lo, timing_filter, notional=SIZE_USD):
         if tr:
             tr["slug"] = m.get("slug")
             trades.append(tr)
+            seen_events.add(ev)
     if not trades:
         return {"n": 0, "wr": 0.0, "ev": 0.0, "pnl": 0.0}
     wr = sum(1 for t in trades if t["payout"] > 0.5) / len(trades) * 100.0
@@ -1314,6 +1320,8 @@ def main():
     ap.add_argument("--pre-hours", type=float, default=None,
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
     ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
+    ap.add_argument("--one-per-event", action="store_true",
+                    help="backtest: max 1 transakcja na mecz (usuwa korelacje linii spreadu)")
     ap.add_argument("--no-policy", action="store_true",
                     help="backtest bez filtra polityki (grupy/ligi) - do porownan")
     ap.add_argument("--bt-min-vol", type=float, default=None,
@@ -1337,6 +1345,10 @@ def main():
         PRE_GAME_WINDOW_H = float(args.pre_hours)
         _is_pre_game.__defaults__ = (PRE_GAME_WINDOW_H,)
         print(f"[test] okno pre-game = {PRE_GAME_WINDOW_H} h")
+    if args.one_per_event:
+        global BT_ONE_PER_EVENT
+        BT_ONE_PER_EVENT = True
+        print("[test] jedna transakcja na event")
     if args.no_policy:
         global BT_USE_POLICY
         BT_USE_POLICY = False
