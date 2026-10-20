@@ -169,7 +169,17 @@ DEFAULT_DURATION_H = 3.5    # gdy nie znamy dyscypliny
 # Stawka 1 USD (żądanie użytkownika). Zlecenia market FAK przechodzą po 1 USD
 # (potwierdzone w live); min_order_size z /book dotyczy zleceń limit, nie market.
 SIZE_USD = 1.0
-MAX_POSITIONS = 13
+MAX_POSITIONS = 30
+
+# --- tryb wejsc: tylko live (bez pre-game) ---
+PRE_ENABLED = False          # False = nie wchodzimy przed meczem, tylko w trakcie (live)
+LIVE_ALL_GROUPS = True       # True = live handluje te same grupy co pre, dla wszystkich lig
+
+# --- progresja stawki od bankrollu ---
+BANKROLL_START = 40.0        # startowy bankroll (USD); ~150 zl
+BASE_STAKE = 1.0             # bazowa stawka (USD)
+STAKE_STEP = 0.01            # co +1% wzrostu bankrollu...
+STAKE_INC = 0.03             # ...stawka rosnie o +3%
 LOOP_SLEEP = 60             # sekundy miï¿½dzy skanami
 ACTIVE_MARKET_LIMIT_PER_TAG = 2000   # cap na tag (byï¿½o 10000 -> setki ï¿½ï¿½daï¿½ na skan)
 ACTIVE_EVENT_OFFSET_LIMIT = 2000     # cap offsetu eventï¿½w
@@ -527,7 +537,7 @@ def _entry_timing(m, live_window=LIVE_WINDOW_H):
     """'live' | 'pre' | None ï¿½ na podstawie gameStartTime."""
     if _is_live_game(m, live_window):
         return "live"
-    if _is_pre_game(m):
+    if PRE_ENABLED and _is_pre_game(m):
         return "pre"
     return None
 
@@ -576,6 +586,8 @@ def _timing_ok_strict(gs, t, timing_filter):
     if gs is None:
         return False
     if timing_filter == "pre":
+        if not PRE_ENABLED:
+            return False
         return 0 < gs - t <= PRE_GAME_WINDOW_H * 3600.0
     if timing_filter == "live":
         return 0 <= t - gs <= LIVE_WINDOW_H * 3600.0
@@ -662,8 +674,12 @@ def _market_allowed_by_policy(m):
     group = _market_group(m)
     timing = _entry_timing(m)
     if timing == "live":
+        if LIVE_ALL_GROUPS:
+            return any(group in PRE_MARKET_POLICY.get(s, set()) for s in sports)
         return any(s in SOCCER_TAGS for s in sports) and group in LIVE_SOCCER_MARKETS
     if timing == "pre":
+        if not PRE_ENABLED:
+            return False
         return any(group in PRE_MARKET_POLICY.get(s, set()) for s in sports)
     return False
 
@@ -848,6 +864,20 @@ def _entry_prices(m):
         return None
     return yes_price, no_token, no_ask, m.get("no_idx")
 
+def _bankroll(trades):
+    """Bankroll = start + zrealizowany PnL. Na jego podstawie liczymy stawke."""
+    return BANKROLL_START + sum(float(t.get("pnl_usd") or 0.0) for t in trades)
+
+
+def _stake_usd(bankroll):
+    """Stawka = BASE_STAKE * (1 + 3% * liczba pelnych 1% wzrostu bankrollu)."""
+    if bankroll <= 0:
+        return 0.0
+    growth = (bankroll - BANKROLL_START) / BANKROLL_START
+    steps = int(growth / STAKE_STEP) if growth > 0 else 0
+    return round(BASE_STAKE * (1.0 + STAKE_INC * steps), 4)
+
+
 def _open_position(m, positions, trades, broker, dry, tags):
     """Wejï¿½cie: kup NO gdy YES w pasmie i EV >= MIN_EDGE. Zwraca True jeï¿½eli otwarto."""
     slug = m.get("slug")
@@ -884,7 +914,10 @@ def _open_position(m, positions, trades, broker, dry, tags):
     limit_price = min(0.99, no_ask + ASSUMED_SPREAD / 2.0)
     tick = get_tick_size(no_token)
     # Stawka twardo 1 USD — zlecenia market FAK przechodzą po 1 USD (live potwierdzone).
-    usd = SIZE_USD
+    bank = _bankroll(trades)
+    usd = _stake_usd(bank)
+    if usd <= 0 or usd > bank:
+        return False
     res = broker.buy_no(no_token, usd, limit_price, tick, fee_rate)
     if not res.get("ok"):
         if not dry:
@@ -956,8 +989,12 @@ def _bt_policy_ok(m, timing):
         return False
     group = m.get("group") or "other"
     if timing == "live":
+        if LIVE_ALL_GROUPS:
+            return any(group in PRE_MARKET_POLICY.get(t, set()) for t in sports)
         return any(t in SOCCER_TAGS for t in sports) and group in LIVE_SOCCER_MARKETS
     if timing == "pre":
+        if not PRE_ENABLED:
+            return False
         return any(group in PRE_MARKET_POLICY.get(t, set()) for t in sports)
     return False
 
@@ -1103,7 +1140,8 @@ def run_backtest():
         print("brak rynkow po filtrze - zmniejsz BT_MIN_VOL albo pobierz wiecej danych")
         return
     best = None
-    for timing in ("pre", "live"):   # "post" pominiety: polityka nie wpuszcza wejsc po meczu
+    timings = (("pre", "live") if PRE_ENABLED else ("live",))   # live-only domyslnie
+    for timing in timings:
         for no_lo in (0.50, 0.60, 0.70, 0.75, 0.80, 0.85):
             r = _backtest_run(cache, no_lo, timing)
             print(f"timing={timing:4s} NO>={no_lo:.2f}  n={r['n']:4d} "
@@ -1246,7 +1284,9 @@ def run_loop(tags, dry=True):
             _save(tf, trades)
             pnl = sum(t["pnl_usd"] for t in trades)
             unreal = _mark_positions(positions)
-            print(f"[{datetime.now(timezone.utc):%H:%M}] pozycje={len(positions)} "
+            bank = _bankroll(trades)
+            print(f"[{datetime.now(timezone.utc):%H:%M}] bankroll={bank:.2f} stawka={_stake_usd(bank):.2f} "
+                  f"pozycje={len(positions)} "
                   f"zamkniete={len(trades)} PnL_zreal={pnl:+.2f} PnL_otwarte={unreal:+.2f} "
                   f"RAZEM={pnl + unreal:+.2f} USD otwarto={opened}")
         except KeyboardInterrupt:
@@ -1283,7 +1323,9 @@ def run_once(tags, dry=True):
     _save(tf, trades)
     pnl = sum(t["pnl_usd"] for t in trades)
     unreal = _mark_positions(positions)
-    print(f"otwarto={opened} | PnL_zreal={pnl:+.2f} PnL_otwarte={unreal:+.2f} RAZEM={pnl + unreal:+.2f} USD")
+    bank = _bankroll(trades)
+    print(f"otwarto={opened} | bankroll={bank:.2f} stawka={_stake_usd(bank):.2f} "
+          f"| PnL_zreal={pnl:+.2f} PnL_otwarte={unreal:+.2f} RAZEM={pnl + unreal:+.2f} USD")
 
 
 def run_report(dry=True):
