@@ -671,10 +671,25 @@ def _market_allowed_by_policy(m):
 # STAN / ZAPIS
 # ===========================================================================
 def _load(path, default):
+    """Wczytuje JSON. Rozroznia: brak pliku / plik uszkodzony / za duzy na pamiec."""
     try:
-        with open(path) as f:
-            return json.load(f)
-    except Exception:
+        return json.load(open(path))
+    except FileNotFoundError:
+        return default
+    except MemoryError:
+        try:
+            mb = os.path.getsize(path) / 1e6
+        except OSError:
+            mb = -1
+        print(f"[load] {path}: plik {mb:.0f} MB - brak pamieci. Przebuduj cache mniejszym zakresem "
+              f"(--days 7 --max-markets 4000).")
+        return default
+    except Exception as e:
+        try:
+            mb = os.path.getsize(path) / 1e6
+        except OSError:
+            mb = -1
+        print(f"[load] {path}: nie mozna wczytac ({e!r}), rozmiar {mb:.1f} MB")
         return default
 
 
@@ -1067,7 +1082,8 @@ def run_backtest():
     print("== BACKTEST FADE LONGSHOT (hold do rozstrzygniecia) ==")
     cache = _load(BT_CACHE, None)
     if not cache:
-        print(f"brak {BT_CACHE} - uruchom: python bot_v2_dry_v3.py --fetch-history --days 30")
+        print(f"brak lub nieczytelny {BT_CACHE} - uruchom: python bot_v2_dry_v3.py "
+              f"--fetch-history --days 7 --max-markets 4000")
         return
     total = len(cache)
     cache = [m for m in cache if float(m.get("volume") or 0.0) >= BT_MIN_VOL]
