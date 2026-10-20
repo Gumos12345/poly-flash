@@ -962,7 +962,7 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
     tags = expand_tags(tags)
     cutoff = time.time() - days * 86400
     seen, items = set(), []
-    per_tag = max(20, max_markets // max(1, len(tags)))   # zeby kazdy tag cos wniosl
+    per_tag = max(50, max_markets // max(1, len(tags)))   # zeby kazdy tag cos wniosl
     for tag in tags:
         tag_n = 0
         if len(items) >= max_markets:
@@ -1005,7 +1005,14 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
         print(f"[{tag}] +{tag_n} rynkow (razem {len(items)})")
 
     def _hist(it):
-        it["history"] = get_price_history(it.pop("yes_token"), fidelity=FETCH_HISTORY_FIDELITY)
+        """Historia przycieta do okna, ktore strategia moze wykorzystac: [start-3h, start+7h]."""
+        gs = it.get("game_start")
+        hist = get_price_history(it.pop("yes_token"), fidelity=FETCH_HISTORY_FIDELITY)
+        if gs and hist:
+            lo = gs - 3 * 3600.0
+            hi = gs + (LIVE_WINDOW_H + 1) * 3600.0
+            hist = [(t, pr) for t, pr in hist if lo <= t <= hi]
+        it["history"] = hist
         return it
 
     with ThreadPoolExecutor(10) as pool:
@@ -1032,7 +1039,7 @@ def run_backtest():
         print("brak rynkow po filtrze - zmniejsz BT_MIN_VOL albo pobierz wiecej danych")
         return
     best = None
-    for timing in ("pre", "live", "post"):
+    for timing in ("pre", "live"):   # "post" pominiety: polityka nie wpuszcza wejsc po meczu
         for no_lo in (0.50, 0.60, 0.70, 0.75, 0.80, 0.85):
             r = _backtest_run(cache, no_lo, timing)
             print(f"timing={timing:4s} NO>={no_lo:.2f}  n={r['n']:4d} "
@@ -1249,6 +1256,8 @@ def main():
     ap.add_argument("--pre-hours", type=float, default=None,
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
     ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
+    ap.add_argument("--bt-min-vol", type=float, default=None,
+                    help="backtest: min. wolumen rynku (domyslnie 5000; 1000 = wiecej rynkow)")
     ap.add_argument("--assumed-spread", type=float, default=None,
                     help="nadpisz ASSUMED_SPREAD w backtescie (test wrazliwosci, np. 0.04)")
     ap.add_argument("--max-hours", type=float, default=None,
@@ -1260,7 +1269,7 @@ def main():
     ap.add_argument("--tags", default=",".join(TRADE_TAGS))
     ap.add_argument("--fetch-history", action="store_true", help="zbuduj bt_cache2.json z ostatnich N dni")
     ap.add_argument("--days", type=int, default=30)
-    ap.add_argument("--max-markets", type=int, default=400)
+    ap.add_argument("--max-markets", type=int, default=2000)
     args = ap.parse_args()
     tags = expand_tags(args.tags)
     if args.pre_hours:
@@ -1268,6 +1277,9 @@ def main():
         PRE_GAME_WINDOW_H = float(args.pre_hours)
         _is_pre_game.__defaults__ = (PRE_GAME_WINDOW_H,)
         print(f"[test] okno pre-game = {PRE_GAME_WINDOW_H} h")
+    if args.bt_min_vol is not None:
+        global BT_MIN_VOL
+        BT_MIN_VOL = float(args.bt_min_vol)
     if args.by_tag:
         global BT_BY_TAG
         BT_BY_TAG = True
