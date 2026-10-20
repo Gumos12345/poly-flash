@@ -24,7 +24,9 @@ python bot_v2_dry_v3.py --report      # test: powinno wypisać "brak otwartych p
 
 ```bash
 termux-wake-lock                      # blokada usypiania Androida (WAŻNE)
-python bot_v2_dry_v3.py --scan --tags nba,ufc,epl   # co bot w ogóle widzi
+python bot_v2_dry_v3.py --scan --tags nba,ufc,epl   # rynki, które bot kupiłby TERAZ
+python bot_v2_dry_v3.py --explain --tags nba,ufc,epl  # dlaczego reszta jest odrzucona
+python bot_v2_dry_v3.py --pre-hours 24 --scan --tags nba   # test: poszerzone okno czasu (tylko ten przebieg)
 python bot_v2_dry_v3.py --once         # jeden przebieg: otwórz pozycje + PnL
 nohup python bot_v2_dry_v3.py --dry > dry.log 2>&1 &
 tail -f dry.log                       # podgląd na żywo (Ctrl+C zamyka tylko podgląd)

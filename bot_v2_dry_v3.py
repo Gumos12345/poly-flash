@@ -13,6 +13,8 @@ Strategia:
 
 Tryby:
   python3 bot_v2_dry_v3.py --scan       # skan rynkow + EV (bez handlu)
+  python3 bot_v2_dry_v3.py --explain    # dlaczego bot odrzuca rynki (zliczone powody)
+  python3 bot_v2_dry_v3.py --pre-hours 24 --scan   # test: poszerz okno pre-game (tylko na ten przebieg)
   python3 bot_v2_dry_v3.py --once       # jeden przebieg: otworz pozycje, pokaz PnL
   python3 bot_v2_dry_v3.py --report     # otwarte pozycje + PnL biezacy (mark-to-market)
   python3 bot_v2_dry_v3.py --dry        # petla na zywo, bez prawdziwych zlecen
@@ -973,36 +975,90 @@ def run_backtest():
 # ===========================================================================
 # SKAN (bez handlu)
 # ===========================================================================
+def _reject_reason(m):
+    """Powod odrzucenia rynku (pusty string = rynek przechodzi wszystkie filtry)."""
+    timing = _entry_timing(m)
+    if timing is None:
+        gs = _ts(m.get("gameStartTime"))
+        if gs is None:
+            return "brak gameStartTime (futures/sezon, nie mecz)"
+        h = (gs - time.time()) / 3600.0
+        return f"poza oknem czasu (start za {h:.1f} h)" if h > 0 else f"mecz juz trwal/skonczony ({-h:.1f} h temu)"
+    sports = _market_sports(m)
+    if not sports:
+        return "kategoria zablokowana (BLOCKED_SPORT_TAGS / brak w polityce)"
+    group = _market_group(m)
+    if timing == "live":
+        if not (any(x in SOCCER_TAGS for x in sports) and group in LIVE_SOCCER_MARKETS):
+            return f"live: grupa {group} nie jest handlowana na zywo"
+    elif not any(group in PRE_MARKET_POLICY.get(x, set()) for x in sports):
+        return f"polityka pre: grupa {group} wylaczona dla {','.join(sorted(sports))}"
+    if float(m.get("volume") or 0.0) < MIN_ACTIVE_VOL:
+        return "wolumen < MIN_ACTIVE_VOL"
+    if not _same_day_ok(m):
+        return "nie rozstrzygnie sie dość szybko (same-day)"
+    pr = _entry_prices(m)
+    if not pr:
+        return "brak cen w CLOB"
+    yes_price, no_token, no_ask, no_idx = pr
+    if not (LONG_LO <= yes_price <= LONG_HI):
+        return f"YES={yes_price:.2f} poza pasmem {LONG_LO}-{LONG_HI}"
+    if abs(no_ask - (1.0 - yes_price)) > 0.06:
+        return f"rozjazd YES/NO ({yes_price:.2f}/{no_ask:.2f})"
+    ev = ev_buy_no(yes_price, fee_for_tag(",".join(m.get("source_tags") or ["sports"])),
+                   ASSUMED_SPREAD)[1]
+    if ev < MIN_EDGE:
+        return f"EV {ev * 100:+.1f}% < MIN_EDGE"
+    return ""
+
+
+def run_explain(tags, examples=2):
+    """Zlicza powody odrzucenia rynkow - do diagnozy 'dlaczego nic nie kupuje'."""
+    print("== EXPLAIN == (powody odrzucen, bez handlu)")
+    markets = fetch_active_markets(tags, limit=ACTIVE_MARKET_LIMIT_PER_TAG, min_vol=MIN_ACTIVE_VOL)
+    print(f"pobrano {len(markets)} rynkow | tagi={tags}")
+    buckets, passed = {}, []
+    for m in markets:
+        r = _reject_reason(m)
+        if not r:
+            passed.append(m)
+            continue
+        key = re.sub(r"\d+([.,]\d+)?", "N", r)
+        buckets.setdefault(key, []).append((m.get("slug") or "?", r))
+    print(f"PRZECHODZI WSZYSTKIE FILTRY: {len(passed)}")
+    for m in passed[:10]:
+        pr = _entry_prices(m)
+        print(f"  OK  {m.get('slug')[:58]:58s} YES={pr[0]:.2f} NO={pr[2]:.2f} "
+              f"{_market_group(m)}/{_entry_timing(m)} vol={float(m.get('volume') or 0):.0f}")
+    print("ODRZUCONE (powod -> liczba):")
+    for key in sorted(buckets, key=lambda k: -len(buckets[k])):
+        print(f"  {len(buckets[key]):4d}  {key}")
+        for slug, r in buckets[key][:examples]:
+            print(f"          np. {slug[:58]:58s} -> {r}")
+
+
 def run_scan(tags):
-    """Pokaï¿½ aktywne rynki zgodne z politykï¿½ + EV (bez zleceï¿½)."""
+    """Pokazuje TYLKO rynki, ktore bot realnie kupilby teraz (te same filtry co _open_position)."""
     print("== SKAN ==")
     markets = fetch_active_markets(tags, limit=ACTIVE_MARKET_LIMIT_PER_TAG, min_vol=MIN_ACTIVE_VOL)
-    print(f"pobrano {len(markets)} rynkï¿½w")
+    print(f"pobrano {len(markets)} rynkow")
     shown = 0
     for m in markets:
-        if not _market_allowed_by_policy(m):
-            continue
-        timing = _entry_timing(m)
-        if timing is None:
+        if _reject_reason(m):
             continue
         pr = _entry_prices(m)
-        if not pr:
-            continue
         yes_price = pr[0]
-        if not (LONG_LO <= yes_price <= LONG_HI):
-            continue
-            continue
         fee_rate = fee_for_tag(",".join(m.get("source_tags") or ["sports"]))
-        ev_usd, ev_frac = ev_buy_no(yes_price, fee_rate, ASSUMED_SPREAD)
-        flag = "OK" if ev_frac >= MIN_EDGE else "  "
-        print(f"[{flag}] {timing:4s} {_market_group(m):9s} YES={yes_price:.3f} "
-              f"EV={ev_frac * 100:+6.1f}% | {m.get('slug')}")
+        ev_frac = ev_buy_no(yes_price, fee_rate, ASSUMED_SPREAD)[1]
+        print(f"[OK] {_entry_timing(m):4s} {_market_group(m):9s} YES={yes_price:.3f} "
+              f"NO={pr[2]:.3f} EV={ev_frac * 100:+6.1f}% | {m.get('slug')}")
         shown += 1
         if shown >= 25:
             break
     if not shown:
-        print("brak rynkï¿½w speï¿½niajï¿½cych politykï¿½/pasmï¿½/EV")
-
+        print("brak rynkow spelniajacych wszystkie filtry w tej chwili")
+        print("-> powod: python bot_v2_dry_v3.py --explain --tags ...")
+        print("-> test okna czasu: python bot_v2_dry_v3.py --pre-hours 24 --scan --tags ...")
 
 # ===========================================================================
 # Pï¿½TLA (dry / live)
@@ -1106,6 +1162,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--backtest", action="store_true")
     ap.add_argument("--scan", action="store_true")
+    ap.add_argument("--explain", action="store_true", help="pokaz powody odrzucania rynkow")
+    ap.add_argument("--pre-hours", type=float, default=None,
+                    help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
     ap.add_argument("--once", action="store_true", help="jeden przebieg: otworz pozycje i pokaz PnL")
     ap.add_argument("--report", action="store_true", help="raport otwartych pozycji + PnL (mark-to-market)")
     ap.add_argument("--dry", action="store_true")
@@ -1116,12 +1175,19 @@ def main():
     ap.add_argument("--max-markets", type=int, default=400)
     args = ap.parse_args()
     tags = expand_tags(args.tags)
+    if args.pre_hours:
+        global PRE_GAME_WINDOW_H
+        PRE_GAME_WINDOW_H = float(args.pre_hours)
+        _is_pre_game.__defaults__ = (PRE_GAME_WINDOW_H,)
+        print(f"[test] okno pre-game = {PRE_GAME_WINDOW_H} h")
     if args.fetch_history:
         build_bt_cache(tags, days=args.days, max_markets=args.max_markets)
     elif args.backtest:
         run_backtest()
     elif args.scan:
         run_scan(tags)
+    elif args.explain:
+        run_explain(tags)
     elif args.once:
         run_once(tags, dry=not args.live)
     elif args.report:
