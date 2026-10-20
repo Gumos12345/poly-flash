@@ -1165,6 +1165,8 @@ def main():
     ap.add_argument("--explain", action="store_true", help="pokaz powody odrzucania rynkow")
     ap.add_argument("--pre-hours", type=float, default=None,
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
+    ap.add_argument("--max-hours", type=float, default=None,
+                    help="nadpisz MAX_HOURS_TO_RESOLVE na ten przebieg (test same-day)")
     ap.add_argument("--once", action="store_true", help="jeden przebieg: otworz pozycje i pokaz PnL")
     ap.add_argument("--report", action="store_true", help="raport otwartych pozycji + PnL (mark-to-market)")
     ap.add_argument("--dry", action="store_true")
@@ -1180,6 +1182,10 @@ def main():
         PRE_GAME_WINDOW_H = float(args.pre_hours)
         _is_pre_game.__defaults__ = (PRE_GAME_WINDOW_H,)
         print(f"[test] okno pre-game = {PRE_GAME_WINDOW_H} h")
+    if args.max_hours:
+        global MAX_HOURS_TO_RESOLVE
+        MAX_HOURS_TO_RESOLVE = float(args.max_hours)
+        print(f"[test] MAX_HOURS_TO_RESOLVE = {MAX_HOURS_TO_RESOLVE} h")
     if args.fetch_history:
         build_bt_cache(tags, days=args.days, max_markets=args.max_markets)
     elif args.backtest:
