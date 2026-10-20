@@ -116,3 +116,19 @@ chmod +x monitor.sh
 nohup ./monitor.sh > /dev/null 2>&1 &   # co 5 min dopisuje status + raport do monitor.log
 tail -f monitor.log
 ```
+
+## 9. Podglad logow na zywo
+
+```bash
+./logs.sh          # dry.log + raport.log
+./logs.sh dry      # tylko dry.log
+./logs.sh key      # tylko wejscia, PnL i bledy (najczystsze)
+```
+
+Ctrl+C konczy podglad, bot dalej chodzi. Dwa panele w tmux:
+
+```bash
+pkg install -y tmux
+tmux new -s bot     # potem: tail -n 30 -F dry.log ; Ctrl+B " ; tail -n 30 -F raport.log
+# odlaczenie: Ctrl+B D      powrot: tmux attach -t bot
+```
