@@ -170,6 +170,7 @@ DEFAULT_DURATION_H = 3.5    # gdy nie znamy dyscypliny
 # (potwierdzone w live); min_order_size z /book dotyczy zleceń limit, nie market.
 SIZE_USD = 1.0
 MAX_POSITIONS = 30
+MAX_POSITIONS_PER_EVENT = 3  # max pozycji z jednego meczu (linie spreadu sa skorelowane)
 
 # --- tryb wejsc: tylko live (bez pre-game) ---
 PRE_ENABLED = False          # False = nie wchodzimy przed meczem, tylko w trakcie (live)
@@ -180,6 +181,9 @@ BANKROLL_START = 40.0        # startowy bankroll (USD); ~150 zl
 BASE_STAKE = 1.0             # bazowa stawka (USD)
 STAKE_STEP = 0.01            # co +1% wzrostu bankrollu...
 STAKE_INC = 0.03             # ...stawka rosnie o +3%
+MAX_STAKE_USD = 3.0          # twardy sufit stawki (bez wzgledu na bankroll)
+MAX_STAKE_FRACTION = 0.10    # i nigdy wiecej niz 10% bankrollu
+LIVE_MIN_BANKROLL = 5.0      # --live odmowi startu ponizej tego bankrollu
 LOOP_SLEEP = 60             # sekundy miï¿½dzy skanami
 ACTIVE_MARKET_LIMIT_PER_TAG = 2000   # cap na tag (byï¿½o 10000 -> setki ï¿½ï¿½daï¿½ na skan)
 ACTIVE_EVENT_OFFSET_LIMIT = 2000     # cap offsetu eventï¿½w
@@ -875,7 +879,9 @@ def _stake_usd(bankroll):
         return 0.0
     growth = (bankroll - BANKROLL_START) / BANKROLL_START
     steps = int(growth / STAKE_STEP) if growth > 0 else 0
-    return round(BASE_STAKE * (1.0 + STAKE_INC * steps), 4)
+    stake = BASE_STAKE * (1.0 + STAKE_INC * steps)
+    stake = min(stake, MAX_STAKE_USD, bankroll * MAX_STAKE_FRACTION)
+    return round(max(0.0, stake), 4)
 
 
 def _open_position(m, positions, trades, broker, dry, tags):
@@ -892,6 +898,9 @@ def _open_position(m, positions, trades, broker, dry, tags):
     if not _same_day_ok(m):
         return False
     if len(positions) >= MAX_POSITIONS:
+        return False
+    ev = m.get("_event")
+    if ev and sum(1 for p in positions.values() if p.get("event") == ev) >= MAX_POSITIONS_PER_EVENT:
         return False
     pr = _entry_prices(m)
     if not pr:
@@ -1354,6 +1363,51 @@ def run_report(dry=True):
 
 
 
+def run_preflight():
+    """Sprawdza wszystko, co potrzebne do --live, bez skladania zlecen."""
+    print("== PREFLIGHT (bez zlecen) ==")
+    print(f"tryb: live-only | grupy: {'wszystkie' if LIVE_ALL_GROUPS else 'soccer'} | "
+          f"max pozycji: {MAX_POSITIONS}")
+    print(f"bankroll start: {BANKROLL_START:.2f} USD | stawka bazowa: {BASE_STAKE:.2f} USD")
+    print(f"progresja: +{STAKE_INC * 100:.0f}% stawki na +{STAKE_STEP * 100:.0f}% bankrollu "
+          f"| sufit {MAX_STAKE_USD:.2f} USD / {MAX_STAKE_FRACTION * 100:.0f}% bankrollu")
+    print()
+    key = os.environ.get("POLY_PRIVATE_KEY")
+    funder = os.environ.get("POLYMARKET_DEPOSIT_WALLET") or os.environ.get("POLY_FUNDER")
+    sig = os.environ.get("POLY_SIGNATURE_TYPE", "1")
+    print(f"POLY_PRIVATE_KEY: {'ustawiony' if key else 'BRAK'}")
+    print(f"funder (POLY_FUNDER): {funder or 'brak (EOA)'}")
+    print(f"POLY_SIGNATURE_TYPE: {sig}")
+    if not key:
+        print("\nBRAK KLUCZA - --live nie wystartuje. Ustaw: export POLY_PRIVATE_KEY=0x...")
+        return
+    try:
+        from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+    except ImportError:
+        print("\nbrak py-clob-client: pip install py-clob-client")
+        return
+    try:
+        client = ClobClient(CLOB_HOST, key=key, chain_id=137,
+                            signature_type=int(sig), funder=funder)
+        client.set_api_creds(client.create_or_derive_api_creds())
+        print(f"klucze OK, adres: {client.get_address()}")
+    except Exception as e:
+        print(f"blad inicjalizacji klienta: {e!r}")
+        return
+    try:
+        bal = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        print(f"saldo/allowance: {bal}")
+    except Exception as e:
+        print(f"nie udalo sie odczytac salda: {e!r}")
+    print()
+    bank = _bankroll(_load(TRADES_FILE_LIVE, []))
+    print(f"bankroll wg trades_v2.json: {bank:.2f} USD -> stawka {_stake_usd(bank):.2f} USD")
+    if bank < LIVE_MIN_BANKROLL:
+        print(f"UWAGA: bankroll < {LIVE_MIN_BANKROLL} USD - --live odmowi startu")
+    print("preflight OK - mozna odpalic: python bot_v2_dry_v3.py --live")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--backtest", action="store_true")
@@ -1362,6 +1416,7 @@ def main():
     ap.add_argument("--pre-hours", type=float, default=None,
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
     ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
+    ap.add_argument("--preflight", action="store_true", help="sprawdz klucze/saldo/stawke przed --live")
     ap.add_argument("--one-per-event", action="store_true",
                     help="backtest: max 1 transakcja na mecz (usuwa korelacje linii spreadu)")
     ap.add_argument("--no-policy", action="store_true",
@@ -1423,7 +1478,14 @@ def main():
         run_report(dry=not args.live)
     elif args.dry:
         run_loop(tags, dry=True)
+    elif args.preflight:
+        run_preflight()
     elif args.live:
+        bank = _bankroll(_load(TRADES_FILE_LIVE, []))
+        if bank < LIVE_MIN_BANKROLL:
+            raise SystemExit(f"bankroll {bank:.2f} USD < LIVE_MIN_BANKROLL {LIVE_MIN_BANKROLL} - STOP")
+        if not PRE_ENABLED:
+            print("[live] tryb live-only: wejscia tylko w trakcie meczu (0-6 h po starcie)")
         run_loop(tags, dry=False)
     else:
         ap.print_help()
