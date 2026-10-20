@@ -177,6 +177,7 @@ GAMMA_BACKOFF = 5.0                  # sekundy miï¿½dzy prï¿½bami
 MARKETS_CACHE_TTL = 300.0            # sekundy waï¿½noï¿½ci cache rynkï¿½w pï¿½tli
 FETCH_HISTORY_PAGES = 15   # ile stron eventow (x100) na tag przy budowie bt_cache
 FETCH_HISTORY_FIDELITY = 5  # rozdzielczosc historii cen (minuty); 1 = 1 min (duzo danych)
+BT_MIN_VOL = 5000.0          # backtest: pomijaj rynki z wolumenem < 5k (nieplynne ligi)
 
 TRADING_MARKET_GROUP = "spread"      # zachowane dla kompatybilnoï¿½ci starszych raportï¿½w
 ONE_POSITION_PER_EVENT = False       # wiele rï¿½ï¿½nych rynkï¿½w z jednego eventu
@@ -960,7 +961,9 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
     tags = expand_tags(tags)
     cutoff = time.time() - days * 86400
     seen, items = set(), []
+    per_tag = max(20, max_markets // max(1, len(tags)))   # zeby kazdy tag cos wniosl
     for tag in tags:
+        tag_n = 0
         if len(items) >= max_markets:
             break
         for page in range(FETCH_HISTORY_PAGES):
@@ -991,13 +994,14 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
                                   "final_yes": final_yes, "source_tags": [tag],
                                   "pair_mode": m["pair_mode"], "volume": float(m.get("volume") or 0.0),
                                   "yes_token": m["yes_token"]})
-                    if len(items) >= max_markets:
+                    tag_n += 1
+                    if len(items) >= max_markets or tag_n >= per_tag:
                         break
-                if len(items) >= max_markets:
+                if len(items) >= max_markets or tag_n >= per_tag:
                     break
-            if len(items) >= max_markets or len(evs) < 100:
+            if len(items) >= max_markets or tag_n >= per_tag or len(evs) < 100:
                 break
-        print(f"[{tag}] zebrane rynki: {len(items)}")
+        print(f"[{tag}] +{tag_n} rynkow (razem {len(items)})")
 
     def _hist(it):
         it["history"] = get_price_history(it.pop("yes_token"), fidelity=FETCH_HISTORY_FIDELITY)
@@ -1014,17 +1018,31 @@ def build_bt_cache(tags, days=30, min_vol=MIN_ACTIVE_VOL, max_markets=400, out=B
 
 def run_backtest():
     """Backtest FADE LONGSHOT: progi NO 0.50-0.85, timing pre/live/post."""
-    print("== BACKTEST FADE LONGSHOT (hold do rozstrzygniï¿½cia) ==")
+    print("== BACKTEST FADE LONGSHOT (hold do rozstrzygniecia) ==")
     cache = _load(BT_CACHE, None)
     if not cache:
-        print(f"brak {BT_CACHE} ï¿½ uruchom fetch_history.py najpierw")
+        print(f"brak {BT_CACHE} - uruchom: python bot_v2_dry_v3.py --fetch-history --days 30")
         return
+    total = len(cache)
+    cache = [m for m in cache if float(m.get("volume") or 0.0) >= BT_MIN_VOL]
+    print(f"rynkow w cache: {total} | po filtrze plynnosci (vol >= {BT_MIN_VOL:.0f}): {len(cache)}")
+    if not cache:
+        print("brak rynkow po filtrze - zmniejsz BT_MIN_VOL albo pobierz wiecej danych")
+        return
+    best = None
     for timing in ("pre", "live", "post"):
         for no_lo in (0.50, 0.60, 0.70, 0.75, 0.80, 0.85):
             r = _backtest_run(cache, no_lo, timing)
             print(f"timing={timing:4s} NO>={no_lo:.2f}  n={r['n']:4d} "
                   f"wr={r['wr']:6.2f}%  EV={r['ev']:+7.2f}%  PnL={r['pnl']:+9.2f} USD")
-
+            if r["n"] >= 20 and (best is None or r["ev"] > best[2]):
+                best = (timing, no_lo, r["ev"], r["n"], r["wr"], r["pnl"])
+    print()
+    if best:
+        print(f"NAJLEPSZY (n>=20): timing={best[0]} NO>={best[1]:.2f} "
+              f"EV={best[2]:+.2f}% n={best[3]} wr={best[4]:.2f}% PnL={best[5]:+.2f} USD")
+    else:
+        print("zaden wariant nie ma n>=20 - probka za mala, pobierz wiecej rynkow")
 
 # ===========================================================================
 # SKAN (bez handlu)
