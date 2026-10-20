@@ -132,3 +132,12 @@ pkg install -y tmux
 tmux new -s bot     # potem: tail -n 30 -F dry.log ; Ctrl+B " ; tail -n 30 -F raport.log
 # odlaczenie: Ctrl+B D      powrot: tmux attach -t bot
 ```
+
+## 10. Analiza wynikow backtestu (t-stat, CI, per liga)
+
+```bash
+python analyze.py        # tabela: n, cena, winrate, EV, t, CI95
+python analyze.py --tag  # + rozbicie per liga
+```
+
+|t| < 2 przy n < 30 = szum. CI95 obejmujace 0 = brak dowodu na edge.
