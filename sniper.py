@@ -118,6 +118,9 @@ def main():
                     help="maks. pokrycie: wiek 10 min, 20 rynkow/obrot, ask<=0.25")
     ap.add_argument("--min-edge", type=float, default=0.02,
                     help="arb: 1-(ask_yes+ask_no) >= min-edge")
+    ap.add_argument("--force-exit", action="store_true",
+                    help="jesli po --track nie ma bidu >= exit-min, sprzedaj po najlepszym bidzie")
+    ap.add_argument("--preflight", action="store_true", help="sprawdz klucze i saldo, wyjdz")
     ap.add_argument("--max-vol", type=float, default=1e9,
                     help="tylko rynki z wolnym obrotem <= tyle USD (np. 5 = prawie puste)")
     ap.add_argument("--exit-min", type=float, default=0.10,
@@ -128,6 +131,27 @@ def main():
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--out", default="sniper_log.jsonl")
     args = ap.parse_args()
+    if args.preflight:
+        import bot_v2_dry_v3 as bot
+        print("== SNIPER PREFLIGHT ==")
+        key = os.environ.get("POLY_PRIVATE_KEY")
+        funder = os.environ.get("POLYMARKET_DEPOSIT_WALLET") or os.environ.get("POLY_FUNDER")
+        print(f"POLY_PRIVATE_KEY: {'OK' if key else 'BRAK'}")
+        print(f"funder: {funder or 'brak (EOA)'}")
+        if not key:
+            return
+        try:
+            br = bot.LiveBroker()
+            print("klient OK, adres:", br.client.get_address())
+            try:
+                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+                print("saldo:", br.client.get_balance_allowance(
+                    BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)))
+            except Exception as e:
+                print("saldo: nie udalo sie odczytac", repr(e))
+        except Exception as e:
+            print("blad klienta:", repr(e))
+        return
     if args.fast:
         args.poll = 0.25
         args.max_check = 6
@@ -214,6 +238,18 @@ def main():
                             except Exception as e:
                                 print("   [SELL ERR]", repr(e))
                         break
+                if not exited and args.force_exit and args.live and broker and shares > 0 and best > 0.01:
+                    try:
+                        from py_clob_client.clob_types import MarketOrderArgs
+                        from py_clob_client.order_builder.constants import SELL
+                        mo = MarketOrderArgs(token_id=tok, amount=shares, side=SELL,
+                                             price=round(best, 4), order_type=broker.OrderType.FAK)
+                        r3 = broker.client.post_order(broker.client.create_market_order(mo),
+                                                      broker.OrderType.FAK)
+                        exited = best
+                        print("   [FORCE SELL]", str(r3)[:140])
+                    except Exception as e:
+                        print("   [FORCE SELL ERR]", repr(e))
                 ref = exited if exited else best
                 pnl_pct = (ref - ba) / ba * 100.0 if ba > 0 else 0.0
                 rec = {"slug": m["slug"], "typ": typ, "exit_at": exited, "age_s": round(m["age"], 1), "ask": ba,
