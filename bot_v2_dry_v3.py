@@ -1523,6 +1523,7 @@ def main():
     ap.add_argument("--bankroll", type=float, default=None, help="nadpisz BANKROLL_START (np. 4.83)")
     ap.add_argument("--stake", type=float, default=None, help="nadpisz BASE_STAKE (np. 1.0)")
     ap.add_argument("--max-positions", type=int, default=None, help="nadpisz MAX_POSITIONS")
+    ap.add_argument("--min-bankroll", type=float, default=None, help="nadpisz LIVE_MIN_BANKROLL")
     ap.add_argument("--one-per-event", action="store_true",
                     help="backtest: max 1 transakcja na mecz (usuwa korelacje linii spreadu)")
     ap.add_argument("--no-policy", action="store_true",
@@ -1582,6 +1583,10 @@ def main():
         global MAX_POSITIONS
         MAX_POSITIONS = int(args.max_positions)
         print(f"[test] MAX_POSITIONS = {MAX_POSITIONS}")
+    if args.min_bankroll is not None:
+        global LIVE_MIN_BANKROLL
+        LIVE_MIN_BANKROLL = float(args.min_bankroll)
+        print(f"[test] LIVE_MIN_BANKROLL = {LIVE_MIN_BANKROLL:.2f} USD")
     if args.rules_backtest:
         run_rules_backtest()
         return
