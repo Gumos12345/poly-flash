@@ -98,12 +98,25 @@ def main():
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--out", default="bt_full_out.csv")
     ap.add_argument("--min-vol", type=float, default=None)
+    ap.add_argument("--bin-width", type=float, default=None,
+                    help="szerokosc przedzialu ceny (np. 0.10); domyslnie siatka 0.05")
+    ap.add_argument("--spread", type=float, default=None, help="nadpisz ASSUMED_SPREAD (np. 0.05)")
     ap.add_argument("--per-event", action="store_true",
                     help="max 1 wejscie na mecz (linie spreadu/totals sa skorelowane)")
     args = ap.parse_args()
 
     if args.min_vol is not None:
         bot.BT_MIN_VOL = args.min_vol
+    if args.spread is not None:
+        bot.ASSUMED_SPREAD = float(args.spread)
+    bins = BINS
+    if args.bin_width:
+        w = float(args.bin_width)
+        edges = [0.02]
+        while edges[-1] + w < 0.98:
+            edges.append(round(edges[-1] + w, 4))
+        edges.append(0.98)
+        bins = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
 
     cache = bot._load(bot.BT_CACHE, None)
     if not cache:
@@ -120,7 +133,7 @@ def main():
     rows = []
     for timing in TIMINGS:
         for side in ("yes", "no"):
-            for lo, hi in BINS:
+            for lo, hi in bins:
                 base = [(m, sim(m, side, lo, hi, timing)) for m in cache]
                 hits = [(m, r) for m, r in base if r]
                 if args.per_event:
