@@ -118,6 +118,8 @@ def main():
                     help="maks. pokrycie: wiek 10 min, 20 rynkow/obrot, ask<=0.25")
     ap.add_argument("--min-edge", type=float, default=0.02,
                     help="arb: 1-(ask_yes+ask_no) >= min-edge")
+    ap.add_argument("--exit-min", type=float, default=0.10,
+                    help="sprzedaj gdy bid >= tyle (wyjscie po plynnosci)")
     ap.add_argument("--exit-bid", type=float, default=0.15,
                     help="cheap: bid po drugiej stronie >= tyle")
     ap.add_argument("--stake", type=float, default=1.0)
@@ -184,23 +186,42 @@ def main():
                         print("   [LIVE]", res)
                     except Exception as e:
                         print("   [LIVE ERR]", repr(e))
-                best = 0.0
+                best, exited, shares = 0.0, 0.0, 0.0
+                if args.live and broker:
+                    try:
+                        shares = float(res.get("shares") or 0.0) if isinstance(res, dict) else 0.0
+                    except Exception:
+                        shares = 0.0
                 while time.time() - t0 < args.track:
-                    time.sleep(2.0)
-                    nb = book(tok)
-                    if nb and nb[0] > best:
-                        best = nb[0]
-                        if best >= 0.2:
-                            break
-                pnl_pct = (best - ba) / ba * 100.0 if ba > 0 else 0.0
-                rec = {"slug": m["slug"], "typ": typ, "age_s": round(m["age"], 1), "ask": ba,
+                    time.sleep(1.0)
+                    nbk = book(tok)
+                    if nbk and nbk[0] > best:
+                        best = nbk[0]
+                    if best >= args.exit_min:
+                        exited = best
+                        if args.live and broker and shares > 0:
+                            try:
+                                from py_clob_client.clob_types import MarketOrderArgs
+                                from py_clob_client.order_builder.constants import SELL
+                                mo = MarketOrderArgs(token_id=tok, amount=shares, side=SELL,
+                                                     price=round(best, 4),
+                                                     order_type=broker.OrderType.FAK)
+                                r2 = broker.client.post_order(
+                                    broker.client.create_market_order(mo), broker.OrderType.FAK)
+                                print("   [SPRZEDANE]", str(r2)[:160])
+                            except Exception as e:
+                                print("   [SELL ERR]", repr(e))
+                        break
+                ref = exited if exited else best
+                pnl_pct = (ref - ba) / ba * 100.0 if ba > 0 else 0.0
+                rec = {"slug": m["slug"], "typ": typ, "exit_at": exited, "age_s": round(m["age"], 1), "ask": ba,
                        "depth": asz, "best_bid_seen": best,
                        "secs": round(time.time() - t0, 1),
                        "pnl_pct_if_sold": round(pnl_pct, 1)}
                 with open(args.out, "a", encoding="utf-8") as fh:
                     fh.write(json.dumps(rec) + "\n")
-                print(f"   najlepszy bid po {rec['secs']:.0f}s: {best:.3f} -> {pnl_pct:+.0f}% "
-                      f"(papier, przed oplatami)")
+                tag = f"WYJSCIE {exited:.3f}" if exited else f"brak bidu (max {best:.3f})"
+                print(f"   {tag} po {rec['secs']:.0f}s -> {pnl_pct:+.0f}%")
         time.sleep(args.poll)
     print(f"\nkoniec: sprawdzone rynki={len(seen)} strzaly={hits} -> {args.out}")
     if not hits:
