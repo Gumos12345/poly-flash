@@ -114,6 +114,12 @@ def main():
     ap.add_argument("--poll", type=float, default=2.0, help="co ile sekund skanowac")
     ap.add_argument("--max-check", type=int, default=15, help="ile nowych rynkow sprawdzac na obrot")
     ap.add_argument("--fast", action="store_true", help="minimalne opoznienie: poll 0.25s, mniej rynkow")
+    ap.add_argument("--turbo", action="store_true",
+                    help="maks. pokrycie: wiek 10 min, 20 rynkow/obrot, ask<=0.25")
+    ap.add_argument("--min-edge", type=float, default=0.02,
+                    help="arb: 1-(ask_yes+ask_no) >= min-edge")
+    ap.add_argument("--exit-bid", type=float, default=0.15,
+                    help="cheap: bid po drugiej stronie >= tyle")
     ap.add_argument("--stake", type=float, default=1.0)
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--out", default="sniper_log.jsonl")
@@ -122,6 +128,11 @@ def main():
         args.poll = 0.25
         args.max_check = 6
         args.max_age = min(args.max_age, 120)
+    if args.turbo:
+        args.poll = 0.5
+        args.max_check = 20
+        args.max_age = 600
+        args.max_ask = 0.25
 
     print(f"== SNIPER {'LIVE' if args.live else 'DRY'} == max_age={args.max_age:.0f}s "
           f"max_ask={args.max_ask:.2f} stake={args.stake:.2f} track={args.track:.0f}s")
@@ -146,18 +157,24 @@ def main():
             if m["slug"] in seen:
                 continue
             seen.add(m["slug"])
-            if not b0 or not b1:
+            ya, yb, na, nb = b0[2], b0[0], b1[2], b1[0]
+            typ = None
+            if ya > 0 and na > 0 and (1.0 - (ya + na)) >= args.min_edge:
+                typ = f"ARB edge={1.0 - (ya + na):+.3f} (YES {ya:.3f} + NO {na:.3f})"
+            elif ya > 0 and ya <= args.max_ask and nb >= args.exit_bid:
+                typ = f"CHEAP YES {ya:.3f} przy bid NO {nb:.3f}"
+            elif na > 0 and na <= args.max_ask and yb >= args.exit_bid:
+                typ = f"CHEAP NO {na:.3f} przy bid YES {yb:.3f}"
+            if not typ:
                 continue
             for tok, (bb, bs, ba, asz), other_bid in ((m["toks"][0], b0, b1[0]),
                                                       (m["toks"][1], b1, b0[0])):
-                if ba <= 0 or ba > args.max_ask or asz < args.min_depth:
+                if ba <= 0 or asz < args.min_depth:
                     continue
-                if bb > 0.02 or other_bid > 0.02:
-                    continue          # ktoras strona juz wyceniona -> to nie "goly" rynek
                 hits += 1
                 t0 = time.time()
-                print(f"\n[STRZAL] {m['slug'][:52]} wiek={m['age']:.1f}s ask={ba:.3f} "
-                      f"glebokosc={asz:.1f} szt")
+                print(f"\n[STRZAL {typ}] {m['slug'][:48]} wiek={m['age']:.1f}s "
+                      f"ask={ba:.3f} glebokosc={asz:.1f} szt")
                 if args.live and broker:
                     try:
                         import bot_v2_dry_v3 as bot
@@ -174,7 +191,7 @@ def main():
                         if best >= 0.2:
                             break
                 pnl_pct = (best - ba) / ba * 100.0 if ba > 0 else 0.0
-                rec = {"slug": m["slug"], "age_s": round(m["age"], 1), "ask": ba,
+                rec = {"slug": m["slug"], "typ": typ, "age_s": round(m["age"], 1), "ask": ba,
                        "depth": asz, "best_bid_seen": best,
                        "secs": round(time.time() - t0, 1),
                        "pnl_pct_if_sold": round(pnl_pct, 1)}
