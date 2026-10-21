@@ -1465,6 +1465,61 @@ def run_report(dry=True):
 
 
 
+def close_all(dry=True):
+    """Zamyka wszystkie otwarte pozycje: dry = wycena po bid i wpis do trades; live = zlecenie SELL."""
+    pf = POSITIONS_FILE_DRY if dry else POSITIONS_FILE_LIVE
+    tf = TRADES_FILE_DRY if dry else TRADES_FILE_LIVE
+    positions = _load(pf, {})
+    trades = _load(tf, [])
+    if not positions:
+        print("brak otwartych pozycji")
+        return
+    broker = None
+    if not dry:
+        broker = LiveBroker()
+    closed, total = 0, 0.0
+    for key, p in list(positions.items()):
+        if dry:
+            mark = _position_mark(p)
+            pnl = p["shares"] * mark - p["usd"]
+            trades.append({"ts": int(time.time()), "key": key, "slug": p["slug"],
+                           "event": p.get("event", ""), "entry_no": p["entry_no"],
+                           "shares": p["shares"], "cost": p["usd"], "pnl_usd": pnl,
+                           "result": "manual_close", "settled": True, "dry": True})
+            total += pnl
+            del positions[key]
+            closed += 1
+            print(f"  ZAMKNIETA(dry) {p['slug'][:44]:44s} mark={mark:.3f} PnL={pnl:+.2f}")
+        else:
+            try:
+                from py_clob_client.clob_types import MarketOrderArgs
+                from py_clob_client.order_builder.constants import SELL
+                bid = get_bid(p["no_token"])
+                limit = max(0.01, min(0.99, bid))
+                mo = MarketOrderArgs(token_id=p["no_token"], amount=p["shares"],
+                                     side=SELL, price=round(limit, 4),
+                                     order_type=broker.OrderType.FAK)
+                resp = broker.client.post_order(broker.client.create_market_order(mo),
+                                                broker.OrderType.FAK)
+                making = float(resp.get("makingAmount") or 0.0)
+                taking = float(resp.get("takingAmount") or 0.0)
+                usd = taking if taking > 0 else making
+                pnl = usd - p["usd"]
+                trades.append({"ts": int(time.time()), "key": key, "slug": p["slug"],
+                               "event": p.get("event", ""), "entry_no": p["entry_no"],
+                               "shares": p["shares"], "cost": p["usd"], "pnl_usd": pnl,
+                               "result": "manual_sell", "settled": True, "dry": False})
+                total += pnl
+                del positions[key]
+                closed += 1
+                print(f"  SPRZEDANA {p['slug'][:44]:44s} ~{usd:.2f} USD PnL={pnl:+.2f} | {resp}"[:200])
+            except Exception as e:
+                print(f"  BLAD sprzedazy {p['slug'][:40]}: {e!r}")
+    _save(pf, positions)
+    _save(tf, trades)
+    print(f"zamknieto {closed} pozycji, PnL={total:+.2f} USD | zostalo otwartych: {len(positions)}")
+
+
 def run_preflight():
     """Sprawdza wszystko, co potrzebne do --live, bez skladania zlecen."""
     print("== PREFLIGHT (bez zlecen) ==")
@@ -1519,6 +1574,7 @@ def main():
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
     ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
     ap.add_argument("--preflight", action="store_true", help="sprawdz klucze/saldo/stawke przed --live")
+    ap.add_argument("--close-all", action="store_true", help="zamknij wszystkie otwarte pozycje i wyjdz")
     ap.add_argument("--rules-backtest", action="store_true", help="backtest listy STRATEGY_RULES")
     ap.add_argument("--bankroll", type=float, default=None, help="nadpisz BANKROLL_START (np. 4.83)")
     ap.add_argument("--stake", type=float, default=None, help="nadpisz BASE_STAKE (np. 1.0)")
@@ -1587,6 +1643,9 @@ def main():
         global LIVE_MIN_BANKROLL
         LIVE_MIN_BANKROLL = float(args.min_bankroll)
         print(f"[test] LIVE_MIN_BANKROLL = {LIVE_MIN_BANKROLL:.2f} USD")
+    if args.close_all:
+        close_all(dry=not args.live)
+        return
     if args.rules_backtest:
         run_rules_backtest()
         return

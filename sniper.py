@@ -30,12 +30,37 @@ CLOB = "https://clob.polymarket.com"
 UA = {"User-Agent": "sniper/1.0"}
 
 
-def _get(url, params=None, timeout=10):
+import http.client
+
+_CONN = {}
+
+
+def _get(url, params=None, timeout=5):
+    """GET z podtrzymanym polaczeniem TLS (keep-alive) - mniejsze opoznienie niz urllib."""
+    parts = urllib.parse.urlsplit(url)
+    path = parts.path + (("?" + parts.query) if parts.query else "")
     if params:
-        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+        path += ("&" if "?" in path else "?") + urllib.parse.urlencode(params)
+    host = parts.netloc
+    conn = _CONN.get(host)
+    if conn is None:
+        conn = http.client.HTTPSConnection(host, timeout=timeout)
+        _CONN[host] = conn
+    try:
+        conn.request("GET", path, headers={"User-Agent": UA["User-Agent"],
+                                             "Connection": "keep-alive"})
+        resp = conn.getresponse()
+        body = resp.read()
+        if resp.status != 200:
+            raise RuntimeError(f"HTTP {resp.status}")
+        return json.loads(body)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _CONN.pop(host, None)
+        raise
 
 
 def book(token):
@@ -88,10 +113,15 @@ def main():
     ap.add_argument("--track", type=float, default=20.0, help="ile sekund sledzic bid")
     ap.add_argument("--poll", type=float, default=2.0, help="co ile sekund skanowac")
     ap.add_argument("--max-check", type=int, default=15, help="ile nowych rynkow sprawdzac na obrot")
+    ap.add_argument("--fast", action="store_true", help="minimalne opoznienie: poll 0.25s, mniej rynkow")
     ap.add_argument("--stake", type=float, default=1.0)
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--out", default="sniper_log.jsonl")
     args = ap.parse_args()
+    if args.fast:
+        args.poll = 0.25
+        args.max_check = 6
+        args.max_age = min(args.max_age, 120)
 
     print(f"== SNIPER {'LIVE' if args.live else 'DRY'} == max_age={args.max_age:.0f}s "
           f"max_ask={args.max_ask:.2f} stake={args.stake:.2f} track={args.track:.0f}s")
