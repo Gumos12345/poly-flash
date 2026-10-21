@@ -118,6 +118,8 @@ def main():
                     help="maks. pokrycie: wiek 10 min, 20 rynkow/obrot, ask<=0.25")
     ap.add_argument("--min-edge", type=float, default=0.02,
                     help="arb: 1-(ask_yes+ask_no) >= min-edge")
+    ap.add_argument("--max-vol", type=float, default=1e9,
+                    help="tylko rynki z wolnym obrotem <= tyle USD (np. 5 = prawie puste)")
     ap.add_argument("--exit-min", type=float, default=0.10,
                     help="sprzedaj gdy bid >= tyle (wyjscie po plynnosci)")
     ap.add_argument("--exit-bid", type=float, default=0.15,
@@ -151,7 +153,7 @@ def main():
         except Exception as e:
             print(f"  [gamma] {e!r}")
             mk = []
-        mk = [m for m in mk if m["slug"] not in seen][:args.max_check]
+        mk = [m for m in mk if m["slug"] not in seen and m["vol"] <= args.max_vol][:args.max_check]
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(6) as pool:
             books = list(pool.map(lambda mm: (book(mm["toks"][0]), book(mm["toks"][1])), mk))
