@@ -197,6 +197,30 @@ BT_BY_TAG = False            # True -> rozbicie wyniku per liga (ustawiane przez
 BT_USE_POLICY = True         # backtest stosuje te sama polityke grup/lig co live
 BT_ONE_PER_EVENT = False     # True: max 1 transakcja na mecz (linie spreadu sa skorelowane)
 
+# --- tryb regul: lista (timing, side, lo, hi, group) ---
+# timing: "pre" (0..PRE_GAME_WINDOW_H przed startem) | "live" (start..start+LIVE_ENTRY_MAX_MIN)
+# side:   "yes" kupujemy YES w [lo,hi] | "no" kupujemy NO w [lo,hi]
+# group:  "spread" | "totals" | "moneyline" | "other" | None = dowolna
+RULES_ENABLED = False
+LIVE_ENTRY_MAX_MIN = 45      # live: wchodzimy tylko w pierwszych N minutach meczu (anty look-ahead)
+STRATEGY_RULES = [
+    ("pre", "yes", 0.05, 0.15, "spread"),
+    ("pre", "yes", 0.05, 0.20, "spread"),
+    ("pre", "yes", 0.05, 0.15, None),
+    ("pre", "yes", 0.05, 0.25, "spread"),
+    ("pre", "yes", 0.05, 0.20, None),
+    ("pre", "yes", 0.10, 0.15, None),
+    ("pre", "yes", 0.15, 0.20, None),
+    ("pre", "no", 0.50, 0.65, "spread"),
+    ("pre", "no", 0.65, 0.85, "totals"),
+    ("pre", "no", 0.75, 0.85, "totals"),
+    ("pre", "no", 0.75, 0.85, None),
+    ("live", "no", 0.65, 0.85, "totals"),
+    ("live", "no", 0.80, 0.95, "totals"),
+    ("live", "no", 0.85, 0.95, "totals"),
+    ("live", "no", 0.70, 0.75, "totals"),
+]
+
 TRADING_MARKET_GROUP = "spread"      # zachowane dla kompatybilnoï¿½ci starszych raportï¿½w
 ONE_POSITION_PER_EVENT = False       # wiele rï¿½ï¿½nych rynkï¿½w z jednego eventu
 MIN_ACTIVE_VOL = 100.0               # min wolumen rynku w pï¿½tli handlowej
@@ -989,6 +1013,84 @@ def _sim_yes_threshold(m, no_lo, fee_rate, spread, notional, timing_filter):
     return None
 
 
+def _rule_time_ok(gs, t, timing):
+    """Okno czasu dla reguly: pre = 0..PRE_GAME_WINDOW_H przed startem; live = pierwsze LIVE_ENTRY_MAX_MIN."""
+    if gs is None:
+        return False
+    if timing == "pre":
+        return 0 < gs - t <= PRE_GAME_WINDOW_H * 3600.0
+    if timing == "live":
+        return 0 <= t - gs <= LIVE_ENTRY_MAX_MIN * 60.0
+    return False
+
+
+def _sim_rule(m, rule, notional=1.0):
+    """Symuluje jedna regule (timing, side, lo, hi, group). Zwraca dict albo None."""
+    timing, side, lo, hi, group = rule
+    if group and (m.get("group") or "other") != group:
+        return None
+    gs = _ts(m.get("game_start"))
+    if gs is None:
+        return None
+    final_yes = m.get("final_yes")
+    if final_yes is None or 0.01 < final_yes < 0.99:
+        return None
+    fee = fee_for_tag(",".join(m.get("source_tags") or ["sports"]))
+    for t, p in m["history"]:
+        if not _rule_time_ok(gs, t, timing):
+            continue
+        price = p if side == "yes" else 1.0 - p
+        if not (lo <= price <= hi):
+            continue
+        if not _same_day_ok(m, ref_ts=t, gs=gs):
+            continue
+        cost = price + taker_fee(1.0, price, fee) + ASSUMED_SPREAD / 2.0
+        if cost <= 0 or cost >= 1:
+            return None
+        won = (final_yes >= 0.99) if side == "yes" else (final_yes <= 0.01)
+        payout = 1.0 if won else 0.0
+        return {"price": price, "cost": cost, "payout": payout, "entry_t": t,
+                "pnl_pct": (payout - cost) / cost * 100.0,
+                "pnl_usd": (payout - cost) * (notional / cost)}
+    return None
+
+
+def run_rules_backtest():
+    """Przepuszcza STRATEGY_RULES po cache i raportuje kazda regule + sume."""
+    cache = _load(BT_CACHE, None)
+    if not cache:
+        print(f"brak {BT_CACHE} - najpierw --fetch-history")
+        return
+    cache = [m for m in cache if float(m.get("volume") or 0.0) >= BT_MIN_VOL]
+    print(f"== BACKTEST REGUL == rynkow: {len(cache)} | pre<={PRE_GAME_WINDOW_H}h | "
+          f"live<={LIVE_ENTRY_MAX_MIN}min | spread {ASSUMED_SPREAD:.3f}")
+    print(f"{'regula':46s} {'n':>5s} {'cena':>6s} {'wr':>7s} {'EV':>8s} {'t':>6s} {'PnL':>8s}")
+    all_pnl, all_usd, total_n = [], [], 0
+    for rule in STRATEGY_RULES:
+        rows = [r for r in (_sim_rule(m, rule) for m in cache) if r]
+        if not rows:
+            print(f"{str(rule):46s} {0:5d}  -")
+            continue
+        n = len(rows)
+        pnl = [r["pnl_pct"] for r in rows]
+        mean = statistics.mean(pnl)
+        sd = statistics.stdev(pnl) if n > 1 else 0.0
+        se = sd / math.sqrt(n) if n else 0.0
+        t = mean / se if se > 1e-9 else 0.0
+        wr = sum(1 for r in rows if r["payout"] > 0.5) / n * 100.0
+        print(f"{str(rule):46s} {n:5d} {statistics.mean(r['price'] for r in rows):6.3f} "
+              f"{wr:6.2f}% {mean:+7.2f}% {t:+6.2f} {sum(r['pnl_usd'] for r in rows):+8.2f}")
+        all_pnl.extend(pnl)
+        all_usd.extend(r["pnl_usd"] for r in rows)
+        total_n += n
+    if all_pnl:
+        mean = statistics.mean(all_pnl)
+        sd = statistics.stdev(all_pnl)
+        se = sd / math.sqrt(len(all_pnl))
+        print(f"\nRAZEM: n={total_n} EV={mean:+.2f}% t={mean / se:+.2f} "
+              f"CI95=[{mean - 1.96 * se:+.1f},{mean + 1.96 * se:+.1f}]% PnL={sum(all_usd):+.2f} USD (stawka 1 USD)")
+
+
 def _bt_policy_ok(m, timing):
     """Ta sama polityka co live: dozwolone grupy rynku per liga, live tylko dla soccer."""
     sports = {t for t in (m.get("source_tags") or [])
@@ -1417,6 +1519,7 @@ def main():
                     help="nadpisz PRE_GAME_WINDOW_H na ten przebieg (np. 24 do testu)")
     ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
     ap.add_argument("--preflight", action="store_true", help="sprawdz klucze/saldo/stawke przed --live")
+    ap.add_argument("--rules-backtest", action="store_true", help="backtest listy STRATEGY_RULES")
     ap.add_argument("--one-per-event", action="store_true",
                     help="backtest: max 1 transakcja na mecz (usuwa korelacje linii spreadu)")
     ap.add_argument("--no-policy", action="store_true",
@@ -1464,6 +1567,9 @@ def main():
         global MAX_HOURS_TO_RESOLVE
         MAX_HOURS_TO_RESOLVE = float(args.max_hours)
         print(f"[test] MAX_HOURS_TO_RESOLVE = {MAX_HOURS_TO_RESOLVE} h")
+    if args.rules_backtest:
+        run_rules_backtest()
+        return
     if args.fetch_history:
         build_bt_cache(tags, days=args.days, max_markets=args.max_markets)
     elif args.backtest:
