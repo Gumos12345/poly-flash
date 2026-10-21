@@ -98,6 +98,8 @@ def main():
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--out", default="bt_full_out.csv")
     ap.add_argument("--min-vol", type=float, default=None)
+    ap.add_argument("--per-event", action="store_true",
+                    help="max 1 wejscie na mecz (linie spreadu/totals sa skorelowane)")
     args = ap.parse_args()
 
     if args.min_vol is not None:
@@ -119,15 +121,35 @@ def main():
     for timing in TIMINGS:
         for side in ("yes", "no"):
             for lo, hi in BINS:
-                base = [sim(m, side, lo, hi, timing) for m in cache]
-                st = stats([r for r in base if r], days, hours)
+                base = [(m, sim(m, side, lo, hi, timing)) for m in cache]
+                hits = [(m, r) for m, r in base if r]
+                if args.per_event:
+                    seen, dedup = set(), []
+                    for m, r in hits:
+                        key = m.get("event") or m.get("slug")
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        dedup.append((m, r))
+                    hits = dedup
+                st = stats([r for _, r in hits], days, hours)
                 if st:
                     rows.append(dict(timing=timing, side=side, lo=lo, hi=hi, group="ALL",
                                      label=f"{timing} {side.upper()} {lo:.2f}-{hi:.2f}", **st))
                 for g in GROUPS:
-                    sub = [sim(m, side, lo, hi, timing) for m in cache
+                    sub = [(m, sim(m, side, lo, hi, timing)) for m in cache
                            if (m.get("group") or "other") == g]
-                    st2 = stats([r for r in sub if r], days, hours)
+                    gh = [(m, r) for m, r in sub if r]
+                    if args.per_event:
+                        seen2, dd = set(), []
+                        for m, r in gh:
+                            key = m.get("event") or m.get("slug")
+                            if key in seen2:
+                                continue
+                            seen2.add(key)
+                            dd.append((m, r))
+                        gh = dd
+                    st2 = stats([r for _, r in gh], days, hours)
                     if st2:
                         rows.append(dict(timing=timing, side=side, lo=lo, hi=hi, group=g,
                                          label=f"{timing} {side.upper()} {lo:.2f}-{hi:.2f} [{g}]",
@@ -144,6 +166,8 @@ def main():
         print(f"== {title} ==")
         print(f"{'regula':36s} {'n':>4s} {'cena':>5s} {'skut':>6s} {'be':>5s} {'edge':>6s} "
               f"{'EV':>8s} {'t':>6s} {'CI95':>15s} {'/dzien':>6s} {'/godz':>6s} {'PnL$':>7s}")
+        if not rr:
+            print("  (brak wierszy spelniajacych prog - zwieksz cache albo zmniejsz --min-n)")
         for r in rr:
             print(f"{r['label'][:36]:36s} {r['n']:4d} {r['price']:5.2f} {r['wr']:5.1f}% "
                   f"{r['be']:5.1f} {r['edge_pp']:+6.1f} {r['ev']:+7.1f}% {r['t']:+6.2f} "
