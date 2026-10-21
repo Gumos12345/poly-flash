@@ -1520,6 +1520,9 @@ def main():
     ap.add_argument("--by-tag", action="store_true", help="backtest: rozbicie wyniku per liga")
     ap.add_argument("--preflight", action="store_true", help="sprawdz klucze/saldo/stawke przed --live")
     ap.add_argument("--rules-backtest", action="store_true", help="backtest listy STRATEGY_RULES")
+    ap.add_argument("--bankroll", type=float, default=None, help="nadpisz BANKROLL_START (np. 4.83)")
+    ap.add_argument("--stake", type=float, default=None, help="nadpisz BASE_STAKE (np. 1.0)")
+    ap.add_argument("--max-positions", type=int, default=None, help="nadpisz MAX_POSITIONS")
     ap.add_argument("--one-per-event", action="store_true",
                     help="backtest: max 1 transakcja na mecz (usuwa korelacje linii spreadu)")
     ap.add_argument("--no-policy", action="store_true",
@@ -1567,6 +1570,18 @@ def main():
         global MAX_HOURS_TO_RESOLVE
         MAX_HOURS_TO_RESOLVE = float(args.max_hours)
         print(f"[test] MAX_HOURS_TO_RESOLVE = {MAX_HOURS_TO_RESOLVE} h")
+    if args.bankroll is not None:
+        global BANKROLL_START
+        BANKROLL_START = float(args.bankroll)
+        print(f"[test] BANKROLL_START = {BANKROLL_START:.2f} USD")
+    if args.stake is not None:
+        global BASE_STAKE
+        BASE_STAKE = float(args.stake)
+        print(f"[test] BASE_STAKE = {BASE_STAKE:.2f} USD")
+    if args.max_positions is not None:
+        global MAX_POSITIONS
+        MAX_POSITIONS = int(args.max_positions)
+        print(f"[test] MAX_POSITIONS = {MAX_POSITIONS}")
     if args.rules_backtest:
         run_rules_backtest()
         return
