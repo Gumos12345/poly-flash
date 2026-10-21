@@ -157,6 +157,8 @@ def main():
             if m["slug"] in seen:
                 continue
             seen.add(m["slug"])
+            if not b0 or not b1:
+                continue
             ya, yb, na, nb = b0[2], b0[0], b1[2], b1[0]
             typ = None
             if ya > 0 and na > 0 and (1.0 - (ya + na)) >= args.min_edge:
