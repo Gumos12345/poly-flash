@@ -126,20 +126,26 @@ def collect(tags, pages):
                     if d:
                         tmpl = re.sub(r"-?\d+(?:\.\d+)?", "#", q).strip().lower()
                         ladders.setdefault((tmpl, d), []).append((ln, y_tok, n_tok, ypx, npx))
-                for grp in ladders.values():
+                for (tmpl_g, d), grp in ladders.items():
                     if len(grp) < 2:
                         continue
                     grp.sort(key=lambda x: x[0])
                     local = []
                     for i in range(len(grp)):
                         for j in range(i + 1, len(grp)):
-                            l1, y1, _, p1y, _ = grp[i]
-                            l2, _, n2, _, p2n = grp[j]
-                            if l1 == l2 or p1y <= 0 or p2n <= 0:
+                            l1, y1, n1, p1y, p1n = grp[i]
+                            l2, y2, n2, p2y, p2n = grp[j]
+                            if l1 == l2:
                                 continue
-                            if p1y + p2n > 1.06:
+                            # totals/over: latwiejsza = mniejsza linia -> YES(l1)+NO(l2)
+                            # spreads/under: latwiejsza = wieksza linia -> YES(l2)+NO(l1)
+                            if d == "lower_easier":
+                                ty, tn, py, pn = y1, n2, p1y, p2n
+                            else:
+                                ty, tn, py, pn = y2, n1, p2y, p1n
+                            if py <= 0 or pn <= 0 or py + pn > 1.06:
                                 continue
-                            local.append((p1y + p2n, f"{l1}/{l2}", y1, n2))
+                            local.append((py + pn, f"{l1}/{l2}", ty, tn))
                     local.sort(key=lambda x: x[0])
                     for _, lines, y1, n2 in local[:6]:
                         if len(mono) >= 4000:
