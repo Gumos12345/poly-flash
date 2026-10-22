@@ -78,15 +78,24 @@ def collect(tags, pages):
     """Zwraca (mono_cands, multi_cands, dup_groups, n_events)."""
     mono, multi, dup = [], [], {}
     events = 0
-    for tag in tags:
-        for pg in range(pages):
-            try:
-                evs = get(f"{GAMMA}/events", {"closed": "false", "tag_slug": tag, "limit": 100,
-                                              "offset": pg * 100, "order": "volume",
-                                              "ascending": "false"})
-            except Exception:
-                break
-            for ev in evs or []:
+
+    def fetch(task):
+        tag, pg = task
+        try:
+            return get(f"{GAMMA}/events", {"closed": "false", "tag_slug": tag, "limit": 100,
+                                          "offset": pg * 100, "order": "volume",
+                                          "ascending": "false"}) or []
+        except Exception:
+            return []
+
+    tasks = [(t, pg) for t in tags for pg in range(pages)]
+    with ThreadPoolExecutor(8) as pool:
+        fetched = list(pool.map(fetch, tasks))
+
+    if True:
+        if True:
+            for evs in fetched:
+              for ev in evs:
                 events += 1
                 ladders, ml = {}, []
                 for m in ev.get("markets", []):
