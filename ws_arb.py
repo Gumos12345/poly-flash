@@ -38,12 +38,16 @@ def pairs_from_events(tags, pages, min_edge, min_depth):
     return pairs, index
 
 
-def sizing(ya, na, bankroll):
-    """Ile akcji kupic, zeby obie nogi mialy >=1 USD i zmiescic sie w bankrollu."""
+def sizing(ya, na, bankroll, dy=None, dn=None):
+    """Ile akcji kupic: min. 1 USD/noga, max bankroll ORAZ glebokosc ksiag."""
     if ya <= 0 or na <= 0:
         return None
     n_min = max(1.0 / ya, 1.0 / na)      # minimum 1 USD na noge
     n_max = bankroll / (ya + na)
+    if dy:
+        n_max = min(n_max, dy)
+    if dn:
+        n_max = min(n_max, dn)
     if n_max < n_min:
         return None
     n = n_max
@@ -53,8 +57,10 @@ def sizing(ya, na, bankroll):
 
 
 def check_pair(p, asks, min_edge):
-    ay = asks.get(p["y"], 0.0)
-    an = asks.get(p["n"], 0.0)
+    qy = asks.get(p["y"], (0.0, 0.0))
+    qn = asks.get(p["n"], (0.0, 0.0))
+    ay = qy[0] if isinstance(qy, (tuple, list)) else qy
+    an = qn[0] if isinstance(qn, (tuple, list)) else qn
     if ay <= 0 or an <= 0:
         return None
     edge = 1.0 - (ay + an)
@@ -112,7 +118,10 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll):
                     tok = it.get("asset_id")
                     asks_list = it.get("asks") or []
                     if tok and asks_list:
-                        asks[tok] = min(float(a["price"]) for a in asks_list)
+                        lv = [(float(a["price"]), float(a.get("size") or 0)) for a in asks_list]
+                        best = min(p for p, _ in lv)
+                        size = sum(sz for p, sz in lv if abs(p - best) < 1e-9)
+                        asks[tok] = (best, size)
                         touched.add(tok)
                 elif et == "price_change":
                     for ch in it.get("changes") or []:
@@ -127,10 +136,11 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll):
                     net = check_pair(p, asks, min_edge)
                     if net:
                         hits += 1
-                        ya, na = asks.get(p['y']), asks.get(p['n'])
-                        sz = sizing(ya, na, bankroll)
-                        info = (f"| N={sz['n']:.2f} akcji, koszt ${sz['cost']:.2f}, "
-                                f"zysk ${sz['profit']:.2f}") if sz else "| za drogo na ten bankroll"
+                        qy, qn = asks.get(p['y']), asks.get(p['n'])
+                        ya, na = qy[0], qn[0]
+                        sz = sizing(ya, na, bankroll, qy[1], qn[1])
+                        info = (f"| N={sz['n']:.2f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
+                                f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}") if sz                             else "| za drogo / za mala glebokosc"
                         print(f"[ARB] {p['label'][:44]} netto {net * 100:.1f}% "
                               f"(yes={ya:.3f} no={na:.3f}) {info}")
                         if live and sz:
