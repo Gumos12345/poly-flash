@@ -81,7 +81,7 @@ def selftest():
              ({"tok_yes": 0.30, "tok_no": 0.60}, True),
              ({"tok_yes": 0.00, "tok_no": 0.60}, False)]
     for asks, expect in cases:
-        net = check_pair(p, asks, 0.01)
+        net = check_pair(p, asks, 0.01, 0)   # w selftescie brak depth
         ok = (net is not None) == expect
         print(f"  ask_yes={asks['tok_yes']:.2f} ask_no={asks['tok_no']:.2f} "
               f"-> {'ARB netto ' + format(net * 100, '.1f') + '%' if net else 'brak'} "
