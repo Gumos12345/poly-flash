@@ -160,13 +160,33 @@ async def execute(p, ya, na, sz):
         return
     broker = bot.LiveBroker()
     n = sz["n"]
-    for tok, price in ((p["y"], ya), (p["n"], na)):
+    first = None
+    for i, (tok, price) in enumerate(((p["y"], ya), (p["n"], na))):
         usd = round(n * price, 2)
         try:
             r = broker.buy_no(tok, usd, price, bot.get_tick_size(tok), 0.0)
+            ok = isinstance(r, dict) and r.get("ok")
             print("  [LIVE]", str(r)[:140])
         except Exception as e:
+            ok, r = False, None
             print("  [LIVE ERR]", repr(e))
+        if i == 0 and ok:
+            first = (tok, float(r.get("shares") or 0.0))
+        if i == 1 and not ok and first and first[1] > 0:
+            # AWARYJNIE: druga noga nie weszla -> sprzedaj pierwsza
+            print("  [UNWIND] druga noga nie weszla, sprzedaje pierwsza")
+            try:
+                from py_clob_client.clob_types import MarketOrderArgs
+                from py_clob_client.order_builder.constants import SELL
+                bid = bot.get_bid(first[0])
+                mo = MarketOrderArgs(token_id=first[0], amount=first[1], side=SELL,
+                                     price=round(max(0.01, bid), 4),
+                                     order_type=broker.OrderType.FAK)
+                r2 = broker.client.post_order(broker.client.create_market_order(mo),
+                                              broker.OrderType.FAK)
+                print("  [UNWIND]", str(r2)[:140])
+            except Exception as e:
+                print("  [UNWIND ERR] sprzedaj recznie:", repr(e))
 
 
 def main():
