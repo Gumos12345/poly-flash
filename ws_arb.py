@@ -85,13 +85,13 @@ def selftest():
     return 0
 
 
-async def run_ws(tags, pages, min_edge, live, stake, bankroll):
+async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0):
     try:
         import websockets
     except ImportError:
         print("brak modulu websockets. Zainstaluj: pip install websockets")
         return
-    pairs, index = pairs_from_events(tags, pages, min_edge, 1)
+    pairs, index = pairs_from_events(tags, pages, min_edge, min_depth)
     if not pairs:
         print("brak kandydatow")
         return
@@ -172,13 +172,16 @@ def main():
     ap.add_argument("--min-edge", type=float, default=0.01)
     ap.add_argument("--stake", type=float, default=1.0)
     ap.add_argument("--bankroll", type=float, default=4.17)
+    ap.add_argument("--min-depth", type=float, default=1.0,
+                    help="min. liczba akcji po asku (5 = odsiewa pyl)")
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--dry", action="store_true", help="tylko wykrywanie (domyslne)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     if args.selftest:
         sys.exit(selftest())
-    asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake, args.bankroll))
+    asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
+                       args.bankroll, args.min_depth))
 
 
 if __name__ == "__main__":
