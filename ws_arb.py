@@ -56,12 +56,16 @@ def sizing(ya, na, bankroll, dy=None, dn=None):
     return {"n": n, "cost": cost, "payout": n, "profit": n - cost - fee}
 
 
-def check_pair(p, asks, min_edge):
+def check_pair(p, asks, min_edge, min_depth=1.0):
     qy = asks.get(p["y"], (0.0, 0.0))
     qn = asks.get(p["n"], (0.0, 0.0))
     ay = qy[0] if isinstance(qy, (tuple, list)) else qy
     an = qn[0] if isinstance(qn, (tuple, list)) else qn
     if ay <= 0 or an <= 0:
+        return None
+    sy = qy[1] if isinstance(qy, (tuple, list)) else 0.0
+    sn = qn[1] if isinstance(qn, (tuple, list)) else 0.0
+    if min_depth > 0 and (sy < min_depth or sn < min_depth):
         return None
     edge = 1.0 - (ay + an)
     fee = 0.05 * (ay * (1 - ay) + an * (1 - an))
@@ -133,7 +137,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0):
             for tok in touched:
                 for idx in index.get(tok, []):
                     p = pairs[idx]
-                    net = check_pair(p, asks, min_edge)
+                    net = check_pair(p, asks, min_edge, min_depth)
                     if net:
                         hits += 1
                         qy, qn = asks.get(p['y']), asks.get(p['n'])
