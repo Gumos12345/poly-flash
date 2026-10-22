@@ -25,7 +25,9 @@ import mono  # reuse: collect(), ask(), fees
 
 def pairs_from_events(tags, pages, min_edge, min_depth):
     """Buduje liste par (label, tok_yes, tok_no) oraz mape token -> indeksy par."""
-    mono_c, multi_c, dup_c, events = mono.collect(tags, pages)
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]   # KLUCZOWE: lista, nie string
+    print(f"tagi: {len(tag_list)}")
+    mono_c, multi_c, dup_c, events = mono.collect(tag_list, pages)
     pairs, index = [], {}
     for slug, lines, y, n in mono_c:
         idx = len(pairs)
@@ -87,13 +89,16 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll):
     if not pairs:
         print("brak kandydatow")
         return
-    ids = list(index.keys())[:2000]
+    ids = list(index.keys())
     asks = {}
     hits = 0
     url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     async with websockets.connect(url, ping_interval=20, max_size=2 ** 23) as ws:
-        await ws.send(json.dumps({"assets_ids": ids, "type": "market"}))
-        print(f"subskrypcja: {len(ids)} tokenow")
+        for i in range(0, len(ids), 400):
+            chunk = ids[i:i + 400]
+            await ws.send(json.dumps({"assets_ids": chunk, "type": "market"}))
+            await asyncio.sleep(0.2)
+        print(f"subskrypcja: {len(ids)} tokenow w {max(1, (len(ids) + 399) // 400)} paczkach")
         async for raw in ws:
             try:
                 msg = json.loads(raw)
