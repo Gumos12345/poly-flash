@@ -1557,6 +1557,19 @@ def run_preflight():
         print(f"saldo/allowance: {bal}")
     except Exception as e:
         print(f"nie udalo sie odczytac salda: {e!r}")
+
+    if os.environ.get("POLY_PROBE_SIG") == "1":
+        print("\n-- proba wszystkich typow podpisu (tylko odczyt salda) --")
+        for st in (0, 1, 2, 3):
+            try:
+                c2 = ClobClient(CLOB_HOST, key=key, chain_id=137,
+                                signature_type=st, funder=funder)
+                c2.set_api_creds(c2.create_or_derive_api_creds())
+                b2 = c2.get_balance_allowance(
+                    BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+                print(f"  sig={st}: adres={c2.get_address()} saldo={b2}")
+            except Exception as e:
+                print(f"  sig={st}: BLAD {e!r}")
     print()
     bank = _bankroll(_load(TRADES_FILE_LIVE, []))
     print(f"bankroll wg trades_v2.json: {bank:.2f} USD -> stawka {_stake_usd(bank):.2f} USD")
