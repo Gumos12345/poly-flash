@@ -36,6 +36,20 @@ def pairs_from_events(tags, pages, min_edge, min_depth):
     return pairs, index
 
 
+def sizing(ya, na, bankroll):
+    """Ile akcji kupic, zeby obie nogi mialy >=1 USD i zmiescic sie w bankrollu."""
+    if ya <= 0 or na <= 0:
+        return None
+    n_min = max(1.0 / ya, 1.0 / na)      # minimum 1 USD na noge
+    n_max = bankroll / (ya + na)
+    if n_max < n_min:
+        return None
+    n = n_max
+    cost = n * (ya + na)
+    fee = n * 0.05 * (ya * (1 - ya) + na * (1 - na))
+    return {"n": n, "cost": cost, "payout": n, "profit": n - cost - fee}
+
+
 def check_pair(p, asks, min_edge):
     ay = asks.get(p["y"], 0.0)
     an = asks.get(p["n"], 0.0)
@@ -63,7 +77,7 @@ def selftest():
     return 0
 
 
-async def run_ws(tags, pages, min_edge, live, stake):
+async def run_ws(tags, pages, min_edge, live, stake, bankroll):
     try:
         import websockets
     except ImportError:
@@ -108,8 +122,12 @@ async def run_ws(tags, pages, min_edge, live, stake):
                     net = check_pair(p, asks, min_edge)
                     if net:
                         hits += 1
-                        print(f"[ARB] {p['label'][:50]} netto {net * 100:.1f}% "
-                              f"(yes={asks.get(p['y']):.3f} no={asks.get(p['n']):.3f})")
+                        ya, na = asks.get(p['y']), asks.get(p['n'])
+                        sz = sizing(ya, na, bankroll)
+                        info = (f"| N={sz['n']:.2f} akcji, koszt ${sz['cost']:.2f}, "
+                                f"zysk ${sz['profit']:.2f}") if sz else "| za drogo na ten bankroll"
+                        print(f"[ARB] {p['label'][:44]} netto {net * 100:.1f}% "
+                              f"(yes={ya:.3f} no={na:.3f}) {info}")
                         if live:
                             await execute(p, asks, stake)
 
@@ -136,13 +154,14 @@ def main():
     ap.add_argument("--pages", type=int, default=1)
     ap.add_argument("--min-edge", type=float, default=0.01)
     ap.add_argument("--stake", type=float, default=1.0)
+    ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--dry", action="store_true", help="tylko wykrywanie (domyslne)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     if args.selftest:
         sys.exit(selftest())
-    asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake))
+    asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake, args.bankroll))
 
 
 if __name__ == "__main__":
