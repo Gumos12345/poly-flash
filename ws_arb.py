@@ -128,21 +128,23 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll):
                                 f"zysk ${sz['profit']:.2f}") if sz else "| za drogo na ten bankroll"
                         print(f"[ARB] {p['label'][:44]} netto {net * 100:.1f}% "
                               f"(yes={ya:.3f} no={na:.3f}) {info}")
-                        if live:
-                            await execute(p, asks, stake)
+                        if live and sz:
+                            await execute(p, ya, na, sz)
 
 
-async def execute(p, asks, stake):
-    """Kupno obu nog market orderem (min ~1 USD / noga)."""
+async def execute(p, ya, na, sz):
+    """Kupno obu nog w ROWNEJ liczbie akcji (market order, min ~1 USD/noga)."""
     try:
         import bot_v2_dry_v3 as bot
     except ImportError:
         print("  brak bot_v2_dry_v3.py - nie moge wykonac")
         return
     broker = bot.LiveBroker()
-    for tok, key in ((p["y"], "y"), (p["n"], "n")):
+    n = sz["n"]
+    for tok, price in ((p["y"], ya), (p["n"], na)):
+        usd = round(n * price, 2)
         try:
-            r = broker.buy_no(tok, stake, asks[tok], bot.get_tick_size(tok), 0.0)
+            r = broker.buy_no(tok, usd, price, bot.get_tick_size(tok), 0.0)
             print("  [LIVE]", str(r)[:140])
         except Exception as e:
             print("  [LIVE ERR]", repr(e))
