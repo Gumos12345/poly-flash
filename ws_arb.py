@@ -206,7 +206,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                     if live and sz and pair['label'] not in done:
                         done.add(pair['label'])
                         print(f"   [ONCE] wykonuje te pare pierwszy raz")
-                        await execute(pair, ya, na, sz)
+                        await execute(pair, ya, na, sz, qy[1], qn[1])
 
     while True:
         try:
@@ -219,7 +219,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
         await asyncio.sleep(5)
 
 
-async def execute(p, ya, na, sz):
+async def execute(p, ya, na, sz, dy=0.0, dn=0.0):
     """Kupno obu nog w ROWNEJ liczbie akcji (market order, min ~1 USD/noga)."""
     try:
         import bot_v2_dry_v3 as bot
@@ -229,7 +229,9 @@ async def execute(p, ya, na, sz):
     broker = bot.LiveBroker()
     n = sz["n"]
     first = None
-    for i, (tok, price) in enumerate(((p["y"], ya), (p["n"], na))):
+    # najpierw noga z ciensza ksiazka (latwiej zniknie), gruba na koncu
+    legs = sorted([(p["y"], ya, dy), (p["n"], na, dn)], key=lambda x: x[2])
+    for i, (tok, price, _depth) in enumerate(legs):
         usd = round(n * price, 2)
         try:
             r = broker.buy_no(tok, usd, price, bot.get_tick_size(tok), 0.0)
