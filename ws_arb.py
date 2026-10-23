@@ -23,8 +23,8 @@ import sys
 import mono  # reuse: collect(), ask(), fees
 
 
-def pairs_from_events(tags, pages, min_edge, min_depth):
-    """Buduje liste par (label, tok_yes, tok_no) oraz mape token -> indeksy par."""
+def pairs_from_events(tags, pages, min_edge, min_depth, max_sum=0.95):
+    """Pary MONO + DUP. max_sum = gorny limit sumy cen (budzet / min. akcji)."""
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]   # KLUCZOWE: lista, nie string
     print(f"tagi: {len(tag_list)}")
     mono_c, multi_c, dup_c, events = mono.collect(tag_list, pages)
@@ -34,7 +34,32 @@ def pairs_from_events(tags, pages, min_edge, min_depth):
         pairs.append({"label": f"{slug} {lines}", "y": y, "n": n})
         index.setdefault(y, []).append(idx)
         index.setdefault(n, []).append(idx)
-    print(f"eventy: {events} | par MONO: {len(pairs)} | tokenow: {len(index)}")
+    n_mono = len(pairs)
+
+    # --- DUP: to samo pytanie w roznych eventach: YES(A) + NO(B) ---
+    seen_pair = set()
+    for q, items in dup_c.items():
+        if len(items) < 2:
+            continue
+        for i in range(len(items)):
+            s1, y1, n1, py1, pn1 = items[i]
+            for j in range(len(items)):
+                if i == j:
+                    continue
+                s2, y2, n2, py2, pn2 = items[j]
+                if s1 == s2 or py1 <= 0 or pn2 <= 0 or py1 + pn2 > max_sum:
+                    continue
+                key = (y1, n2)
+                if key in seen_pair:
+                    continue
+                seen_pair.add(key)
+                idx = len(pairs)
+                pairs.append({"label": f"DUP {str(s1)[:16]} vs {str(s2)[:16]}", "y": y1, "n": n2})
+                index.setdefault(y1, []).append(idx)
+                index.setdefault(n2, []).append(idx)
+
+    print(f"eventy: {events} | par MONO: {n_mono} | par DUP: {len(pairs) - n_mono} "
+          f"| tokenow: {len(index)}")
     return pairs, index
 
 
@@ -92,13 +117,14 @@ def selftest():
     return 0
 
 
-async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0, min_shares=5.0):
+async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
+                min_shares=0.0, max_sum=0.95):
     try:
         import websockets
     except ImportError:
         print("brak modulu websockets. Zainstaluj: pip install websockets")
         return
-    pairs, index = pairs_from_events(tags, pages, min_edge, min_depth)
+    pairs, index = pairs_from_events(tags, pages, min_edge, min_depth, max_sum)
     if not pairs:
         print("brak kandydatow")
         return
@@ -223,6 +249,8 @@ def main():
     ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
+    ap.add_argument("--max-sum", type=float, default=0.95,
+                    help="gorny limit sumy cen pary (budzet / min. akcji)")
     ap.add_argument("--min-depth", type=float, default=1.0,
                     help="min. liczba akcji po asku (5 = odsiewa pyl)")
     ap.add_argument("--live", action="store_true")
@@ -232,7 +260,7 @@ def main():
     if args.selftest:
         sys.exit(selftest())
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
-                       args.bankroll, args.min_depth, args.min_shares))
+                       args.bankroll, args.min_depth, args.min_shares, args.max_sum))
 
 
 if __name__ == "__main__":
