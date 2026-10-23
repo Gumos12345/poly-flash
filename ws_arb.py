@@ -38,11 +38,11 @@ def pairs_from_events(tags, pages, min_edge, min_depth):
     return pairs, index
 
 
-def sizing(ya, na, bankroll, dy=None, dn=None):
+def sizing(ya, na, bankroll, dy=None, dn=None, min_shares=5.0):
     """Ile akcji kupic: min. 1 USD/noga, max bankroll ORAZ glebokosc ksiag."""
     if ya <= 0 or na <= 0:
         return None
-    n_min = max(1.0 / ya, 1.0 / na)      # minimum 1 USD na noge
+    n_min = max(min_shares, 1.0 / ya, 1.0 / na)   # min. 5 akcji (limit PM) i 1 USD/noga
     n_max = bankroll / (ya + na)
     if dy:
         n_max = min(n_max, dy)
@@ -50,7 +50,9 @@ def sizing(ya, na, bankroll, dy=None, dn=None):
         n_max = min(n_max, dn)
     if n_max < n_min:
         return None
-    n = n_max
+    n = float(int(n_max))                # calkowite akcje
+    if n < n_min:
+        return None
     cost = n * (ya + na)
     fee = n * 0.05 * (ya * (1 - ya) + na * (1 - na))
     return {"n": n, "cost": cost, "payout": n, "profit": n - cost - fee}
@@ -89,7 +91,7 @@ def selftest():
     return 0
 
 
-async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0):
+async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0, min_shares=5.0):
     try:
         import websockets
     except ImportError:
@@ -101,12 +103,11 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0):
         return
     ids = list(index.keys())
     asks = {}
-    hits = 0
     url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-    async with websockets.connect(url, ping_interval=20, max_size=2 ** 23) as ws:
+
+    async def session(ws):
         for i in range(0, len(ids), 400):
-            chunk = ids[i:i + 400]
-            await ws.send(json.dumps({"assets_ids": chunk, "type": "market"}))
+            await ws.send(json.dumps({"assets_ids": ids[i:i + 400], "type": "market"}))
             await asyncio.sleep(0.2)
         print(f"subskrypcja: {len(ids)} tokenow w {max(1, (len(ids) + 399) // 400)} paczkach")
         async for raw in ws:
@@ -123,8 +124,8 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0):
                     asks_list = it.get("asks") or []
                     if tok and asks_list:
                         lv = [(float(a["price"]), float(a.get("size") or 0)) for a in asks_list]
-                        best = min(p for p, _ in lv)
-                        size = sum(sz for p, sz in lv if abs(p - best) < 1e-9)
+                        best = min(pr for pr, _ in lv)
+                        size = sum(sz for pr, sz in lv if abs(pr - best) < 1e-9)
                         asks[tok] = (best, size)
                         touched.add(tok)
                 elif et == "price_change":
@@ -132,23 +133,31 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0):
                         tok = ch.get("asset_id")
                         if tok and ch.get("price"):
                             touched.add(tok)
-                if not touched:
-                    continue
             for tok in touched:
                 for idx in index.get(tok, []):
-                    p = pairs[idx]
-                    net = check_pair(p, asks, min_edge, min_depth)
-                    if net:
-                        hits += 1
-                        qy, qn = asks.get(p['y']), asks.get(p['n'])
-                        ya, na = qy[0], qn[0]
-                        sz = sizing(ya, na, bankroll, qy[1], qn[1])
-                        info = (f"| N={sz['n']:.2f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
-                                f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}") if sz                             else "| za drogo / za mala glebokosc"
-                        print(f"[ARB] {p['label'][:44]} netto {net * 100:.1f}% "
-                              f"(yes={ya:.3f} no={na:.3f}) {info}")
-                        if live and sz:
-                            await execute(p, ya, na, sz)
+                    pair = pairs[idx]
+                    net = check_pair(pair, asks, min_edge, min_depth)
+                    if not net:
+                        continue
+                    qy, qn = asks.get(pair['y']), asks.get(pair['n'])
+                    ya, na = qy[0], qn[0]
+                    sz = sizing(ya, na, bankroll, qy[1], qn[1], min_shares)
+                    info = (f"| N={sz['n']:.2f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
+                            f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}") if sz else "| za drogo / za mala glebokosc"
+                    print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
+                          f"(yes={ya:.3f} no={na:.3f}) {info}")
+                    if live and sz:
+                        await execute(pair, ya, na, sz)
+
+    while True:
+        try:
+            async with websockets.connect(url, ping_interval=10, ping_timeout=10,
+                                          open_timeout=20, max_size=2 ** 23) as ws:
+                await session(ws)
+            print("[WS] sesja zakonczona -> reconnect")
+        except Exception as e:
+            print(f"[WS] rozlaczone ({e!r}) -> reconnect za 5 s")
+        await asyncio.sleep(5)
 
 
 async def execute(p, ya, na, sz):
@@ -196,6 +205,8 @@ def main():
     ap.add_argument("--min-edge", type=float, default=0.01)
     ap.add_argument("--stake", type=float, default=1.0)
     ap.add_argument("--bankroll", type=float, default=4.17)
+    ap.add_argument("--min-shares", type=float, default=5.0,
+                    help="min. liczba akcji na noge (Polymarket: 5)")
     ap.add_argument("--min-depth", type=float, default=1.0,
                     help="min. liczba akcji po asku (5 = odsiewa pyl)")
     ap.add_argument("--live", action="store_true")
@@ -205,7 +216,7 @@ def main():
     if args.selftest:
         sys.exit(selftest())
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
-                       args.bankroll, args.min_depth))
+                       args.bankroll, args.min_depth, args.min_shares))
 
 
 if __name__ == "__main__":
