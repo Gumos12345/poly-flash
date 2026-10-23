@@ -143,8 +143,17 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0, mi
                     qy, qn = asks.get(pair['y']), asks.get(pair['n'])
                     ya, na = qy[0], qn[0]
                     sz = sizing(ya, na, bankroll, qy[1], qn[1], min_shares)
-                    info = (f"| N={sz['n']:.2f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
-                            f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}") if sz else "| za drogo / za mala glebokosc"
+                    if sz:
+                        info = (f"| N={sz['n']:.0f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
+                                f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}")
+                    else:
+                        why = []
+                        need = max(min_shares, 1.0 / ya, 1.0 / na)
+                        if bankroll / (ya + na) < need:
+                            why.append(f"suma {ya+na:.2f} > {bankroll/need:.2f} (max przy {bankroll:.2f} USD)")
+                        if min(qy[1], qn[1]) < min_shares:
+                            why.append(f"depth {min(qy[1], qn[1]):.0f} < {min_shares:.0f}")
+                        info = "| ODRZUCONE: " + (", ".join(why) if why else "brak plynnosci")
                     print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
                           f"(yes={ya:.3f} no={na:.3f}) {info}")
                     if live and sz and pair['label'] not in done:
