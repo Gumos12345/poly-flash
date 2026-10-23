@@ -60,6 +60,24 @@ def pairs_from_events(tags, pages, min_edge, min_depth, max_sum=0.95):
 
     print(f"eventy: {events} | par MONO: {n_mono} | par DUP: {len(pairs) - n_mono} "
           f"| tokenow: {len(index)}")
+
+    # min_order_size per rynek: WS go nie niesie, wiec pobieramy raz przez REST
+    toks = {t for pr in pairs for t in (pr["y"], pr["n"])}
+
+    def _mo(t):
+        try:
+            b = mono.get(f"{mono.CLOB}/book", {"token_id": t}, timeout=8)
+            return t, float(b.get("min_order_size") or 5.0)
+        except Exception:
+            return t, 5.0
+
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    with _TPE(20) as pool:
+        mo = dict(pool.map(_mo, toks))
+    for pr in pairs:
+        pr["mo"] = max(mo.get(pr["y"], 5.0), mo.get(pr["n"], 5.0))
+    from collections import Counter
+    print(f"min_order_size w parach: {dict(Counter(pr['mo'] for pr in pairs))}")
     return pairs, index
 
 
@@ -170,8 +188,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                         continue
                     qy, qn = asks.get(pair['y']), asks.get(pair['n'])
                     ya, na = qy[0], qn[0]
-                    need = max(min_shares, qy[2] if len(qy) > 2 else 5.0,
-                               qn[2] if len(qn) > 2 else 5.0)
+                    need = max(min_shares, pair.get("mo", 5.0))
                     sz = sizing(ya, na, bankroll, qy[1], qn[1], need)
                     if sz:
                         info = (f"| N={sz['n']:.0f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
