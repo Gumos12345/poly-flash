@@ -103,6 +103,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0, mi
         return
     ids = list(index.keys())
     asks = {}
+    done = set()        # jedna egzekucja na pare (bez powtorek co tick)
     url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
     async def session(ws):
@@ -146,7 +147,9 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0, mi
                             f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}") if sz else "| za drogo / za mala glebokosc"
                     print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
                           f"(yes={ya:.3f} no={na:.3f}) {info}")
-                    if live and sz:
+                    if live and sz and pair['label'] not in done:
+                        done.add(pair['label'])
+                        print(f"   [ONCE] wykonuje te pare pierwszy raz")
                         await execute(pair, ya, na, sz)
 
     while True:
