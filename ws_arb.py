@@ -38,11 +38,11 @@ def pairs_from_events(tags, pages, min_edge, min_depth):
     return pairs, index
 
 
-def sizing(ya, na, bankroll, dy=None, dn=None, min_shares=5.0):
+def sizing(ya, na, bankroll, dy=None, dn=None, min_shares=0.0):
     """Ile akcji kupic: min. 1 USD/noga, max bankroll ORAZ glebokosc ksiag."""
     if ya <= 0 or na <= 0:
         return None
-    n_min = max(min_shares, 1.0 / ya, 1.0 / na)   # min. 5 akcji (limit PM) i 1 USD/noga
+    n_min = max(min_shares, 1.0 / ya, 1.0 / na)   # min. z rynku (min_order_size) i 1 USD/noga
     n_max = bankroll / (ya + na)
     if dy:
         n_max = min(n_max, dy)
@@ -67,6 +67,7 @@ def check_pair(p, asks, min_edge, min_depth=1.0):
         return None
     sy = qy[1] if isinstance(qy, (tuple, list)) else 0.0
     sn = qn[1] if isinstance(qn, (tuple, list)) else 0.0
+    # min_order_size per rynek sprawdzamy w sizing()
     if min_depth > 0 and (sy < min_depth or sn < min_depth):
         return None
     edge = 1.0 - (ay + an)
@@ -127,7 +128,8 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0, mi
                         lv = [(float(a["price"]), float(a.get("size") or 0)) for a in asks_list]
                         best = min(pr for pr, _ in lv)
                         size = sum(sz for pr, sz in lv if abs(pr - best) < 1e-9)
-                        asks[tok] = (best, size)
+                        mo = float(it.get("min_order_size") or 5.0)
+                        asks[tok] = (best, size, mo)
                         touched.add(tok)
                 elif et == "price_change":
                     for ch in it.get("changes") or []:
@@ -142,7 +144,9 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0, mi
                         continue
                     qy, qn = asks.get(pair['y']), asks.get(pair['n'])
                     ya, na = qy[0], qn[0]
-                    sz = sizing(ya, na, bankroll, qy[1], qn[1], min_shares)
+                    need = max(min_shares, qy[2] if len(qy) > 2 else 5.0,
+                               qn[2] if len(qn) > 2 else 5.0)
+                    sz = sizing(ya, na, bankroll, qy[1], qn[1], need)
                     if sz:
                         info = (f"| N={sz['n']:.0f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
                                 f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}")
