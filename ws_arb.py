@@ -156,6 +156,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
     url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
     async def session(ws):
+        nonlocal paper_pnl, paper_bank, trades_done   # KLUCZOWE: inaczej UnboundLocalError
         for i in range(0, len(ids), 400):
             await ws.send(json.dumps({"assets_ids": ids[i:i + 400], "type": "market"}))
             await asyncio.sleep(0.2)
