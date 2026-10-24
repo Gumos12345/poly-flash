@@ -128,8 +128,11 @@ PRE_GAME_WINDOW_H = 2       # pre-game: tylko mecze zaczynajï¿½ce siï¿½ w 
 # --- rozmiar / pętla ---
 # Stawka 1 USD (żądanie użytkownika). Zlecenia market FAK przechodzą po 1 USD
 # (potwierdzone w live); min_order_size z /book dotyczy zleceń limit, nie market.
-SIZE_USD = 1.0
-MAX_POSITIONS = 13
+# Nadpisywalne z env, zeby nie edytowac kodu przy malym bankrollu:
+#   POLY_SIZE_USD=1 POLY_MAX_POSITIONS=2 python3 bot_v2_dry_fixed.py --live
+SIZE_USD = float(os.environ.get("POLY_SIZE_USD", "1.0"))
+MAX_POSITIONS = int(os.environ.get("POLY_MAX_POSITIONS", "13"))
+
 LOOP_SLEEP = 60             # sekundy miï¿½dzy skanami
 ACTIVE_MARKET_LIMIT_PER_TAG = 2000   # cap na tag (byï¿½o 10000 -> setki ï¿½ï¿½daï¿½ na skan)
 ACTIVE_EVENT_OFFSET_LIMIT = 2000     # cap offsetu eventï¿½w
