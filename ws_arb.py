@@ -148,6 +148,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
         return
     ids = list(index.keys())
     asks = {}
+    last = {}          # ostatnio sprawdzone ceny pary (mniej CPU -> pingi nie gina)
     done = set()        # jedna egzekucja na pare (bez powtorek co tick)
     trades_done = 0     # licznik wykonanych par (limit przez --max-trades)
     url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -181,8 +182,10 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                         best = min(pr for pr, _ in lv)
                         size = sum(sz for pr, sz in lv if abs(pr - best) < 1e-9)
                         mo = float(it.get("min_order_size") or 5.0)
+                        prev = asks.get(tok)
                         asks[tok] = (best, size, mo)
-                        touched.add(tok)
+                        if not prev or abs(prev[0] - best) > 1e-9:
+                            touched.add(tok)
                 elif et == "price_change":
                     for ch in it.get("changes") or []:
                         tok = ch.get("asset_id")
@@ -195,6 +198,9 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                     if not net:
                         continue
                     qy, qn = asks.get(pair['y']), asks.get(pair['n'])
+                    if last.get(idx) == (qy[0], qn[0]):
+                        continue
+                    last[idx] = (qy[0], qn[0])
                     ya, na = qy[0], qn[0]
                     need = max(min_shares, pair.get("mo", 5.0))
                     sz = sizing(ya, na, bankroll, qy[1], qn[1], need)
@@ -202,13 +208,13 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                         info = (f"| N={sz['n']:.0f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
                                 f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}")
                     else:
-                        why = []
-                        need = max(min_shares, 1.0 / ya, 1.0 / na)
-                        if bankroll / (ya + na) < need:
-                            why.append(f"suma {ya+na:.2f} > {bankroll/need:.2f} (max przy {bankroll:.2f} USD)")
-                        if min(qy[1], qn[1]) < min_shares:
-                            why.append(f"depth {min(qy[1], qn[1]):.0f} < {min_shares:.0f}")
-                        info = "| ODRZUCONE: " + (", ".join(why) if why else "brak plynnosci")
+                        mo_p = pair.get("mo", 5.0)
+                        n_dol = max(1.0 / ya, 1.0 / na)      # 1 USD na noge
+                        need = max(min_shares, mo_p, n_dol)
+                        cost_need = need * (ya + na)
+                        info = (f"| ODRZUCONE: potrzeba {need:.1f} akcji "
+                                f"(min rynku {mo_p:.0f}, 1 USD/noga {n_dol:.1f}), "
+                                f"koszt ${cost_need:.2f} > bankroll ${bankroll:.2f}")
                     print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
                           f"(yes={ya:.3f} no={na:.3f}) {info}")
                     if live and sz and pair['label'] not in done:
