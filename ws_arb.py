@@ -87,6 +87,17 @@ def pairs_from_events(tags, pages, min_edge, min_depth, max_sum=0.95, fetch_mo=F
     return pairs, index
 
 
+def usdc_balance(broker):
+    """Saldo USDC z portfela (w USD). 0.0 gdy nie udalo sie odczytac."""
+    try:
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        b = broker.client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        return float(b.get("balance") or 0) / 1e6
+    except Exception:
+        return 0.0
+
+
 def sizing(ya, na, bankroll, dy=None, dn=None, min_shares=0.0):
     """Ile akcji kupic: min. 1 USD/noga, max bankroll ORAZ glebokosc ksiag."""
     if ya <= 0 or na <= 0:
@@ -143,7 +154,7 @@ def selftest():
 
 async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                 min_shares=0.0, max_sum=0.95, max_trades=1, compound=True,
-                fetch_mo=False, per_event=False):
+                fetch_mo=False, per_event=False, from_balance=0.0):
     try:
         import websockets
     except ImportError:
@@ -153,6 +164,14 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
     if not pairs:
         print("brak kandydatow")
         return
+    bal_broker = None
+    bal_cache = {"ts": 0.0, "usd": 0.0}
+    if live:
+        try:
+            import bot_v2_dry_v3 as _bot
+            bal_broker = _bot.LiveBroker()
+        except Exception as e:
+            print(f"[BAL] nie moge utworzyc klienta: {e!r}")
     ids = list(index.keys())
     asks = {}
     last = {}          # ostatnio sprawdzone ceny pary (mniej CPU -> pingi nie gina)
@@ -213,8 +232,16 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                     last[idx] = (qy[0], qn[0])
                     ya, na = qy[0], qn[0]
                     need = max(min_shares, pair.get("mo", 5.0))
-                    sz = sizing(ya, na, paper_bank if not live else bankroll,
-                                qy[1], qn[1], need)
+                    cur_bank = paper_bank
+                    if live:
+                        cur_bank = bankroll
+                        if from_balance and bal_broker:
+                            if time.time() - bal_cache["ts"] > 60:
+                                bal_cache["usd"] = usdc_balance(bal_broker)
+                                bal_cache["ts"] = time.time()
+                            if bal_cache["usd"] > 0:
+                                cur_bank = min(bankroll, bal_cache["usd"] * from_balance)
+                    sz = sizing(ya, na, cur_bank, qy[1], qn[1], need)
                     if sz:
                         info = (f"| N={sz['n']:.0f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
                                 f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}")
@@ -308,6 +335,8 @@ def main():
     ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
+    ap.add_argument("--from-balance", type=float, default=0.0,
+                    help="live: licz stawke z realnego salda USDC (0.95 = 95% salda)")
     ap.add_argument("--per-event", action="store_true",
                     help="licz tylko jedna pare na mecz (realistyczny PnL)")
     ap.add_argument("--fetch-mo", action="store_true",
@@ -329,7 +358,8 @@ def main():
         sys.exit(selftest())
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
                        args.bankroll, args.min_depth, args.min_shares, args.max_sum,
-                       args.max_trades, args.compound, args.fetch_mo, args.per_event))
+                       args.max_trades, args.compound, args.fetch_mo, args.per_event,
+                       args.from_balance))
 
 
 if __name__ == "__main__":
