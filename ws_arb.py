@@ -29,9 +29,10 @@ def pairs_from_events(tags, pages, min_edge, min_depth, max_sum=0.95, fetch_mo=F
     print(f"tagi: {len(tag_list)}")
     mono_c, multi_c, dup_c, events = mono.collect(tag_list, pages)
     pairs, index = [], {}
-    for slug, lines, y, n in mono_c:
+    for slug, lines, y, n, *rest in mono_c:
         idx = len(pairs)
-        pairs.append({"label": f"{slug} {lines}", "y": y, "n": n})
+        pairs.append({"label": f"{slug} {lines}", "y": y, "n": n,
+                      "end": (rest[0] if rest else 0.0)})
         index.setdefault(y, []).append(idx)
         index.setdefault(n, []).append(idx)
     n_mono = len(pairs)
@@ -154,7 +155,7 @@ def selftest():
 
 async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                 min_shares=0.0, max_sum=0.95, max_trades=1, compound=True,
-                fetch_mo=False, per_event=False, from_balance=0.0):
+                fetch_mo=False, per_event=False, from_balance=0.0, max_hold_h=0.0):
     try:
         import websockets
     except ImportError:
@@ -255,6 +256,12 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                                 f"koszt ${cost_need:.2f} > bankroll ${bankroll:.2f}")
                     print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
                           f"(yes={ya:.3f} no={na:.3f}) {info}")
+                    if max_hold_h and pair.get("end"):
+                        hold_h = (pair["end"] - time.time()) / 3600.0
+                        if hold_h > max_hold_h:
+                            print(f"[ARB] {pair['label'][:44]} ODRZUCONE: rozliczenie za "
+                                  f"{hold_h:.1f} h > limit {max_hold_h:.1f} h")
+                            continue
                     key = pair['label'].split(' ')[0] if per_event else pair['label']
                     if sz and not live and key not in done:
                         done.add(key)
@@ -335,6 +342,8 @@ def main():
     ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
+    ap.add_argument("--max-hold-h", type=float, default=0.0,
+                    help="tylko pary rozliczane w ciagu N h (szybszy zwrot kapitalu)")
     ap.add_argument("--from-balance", type=float, default=0.0,
                     help="live: licz stawke z realnego salda USDC (0.95 = 95 procent salda)")
     ap.add_argument("--per-event", action="store_true",
@@ -359,7 +368,7 @@ def main():
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
                        args.bankroll, args.min_depth, args.min_shares, args.max_sum,
                        args.max_trades, args.compound, args.fetch_mo, args.per_event,
-                       args.from_balance))
+                       args.from_balance, args.max_hold_h))
 
 
 if __name__ == "__main__":

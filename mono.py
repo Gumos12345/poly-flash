@@ -50,6 +50,23 @@ def ask(token):
     return best, size
 
 
+def _ts(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        pass
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
 def num(text):
     m = re.search(r"(-?\d+(?:\.\d+)?)", text or "")
     return float(m.group(1)) if m else None
@@ -126,7 +143,8 @@ def collect(tags, pages):
                     d = direction_of(q, m.get("sportsMarketType"))
                     if d:
                         tmpl = re.sub(r"-?\d+(?:\.\d+)?", "#", q).strip().lower()
-                        ladders.setdefault((tmpl, d), []).append((ln, y_tok, n_tok, ypx, npx))
+                        ladders.setdefault((tmpl, d), []).append(
+                            (ln, y_tok, n_tok, ypx, npx, _ts(m.get("endDate")) or 0.0))
                 for (tmpl_g, d), grp in ladders.items():
                     if len(grp) < 2:
                         continue
@@ -134,8 +152,8 @@ def collect(tags, pages):
                     local = []
                     for i in range(len(grp)):
                         for j in range(i + 1, len(grp)):
-                            l1, y1, n1, p1y, p1n = grp[i]
-                            l2, y2, n2, p2y, p2n = grp[j]
+                            l1, y1, n1, p1y, p1n, e1 = grp[i]
+                            l2, y2, n2, p2y, p2n, e2 = grp[j]
                             if l1 == l2:
                                 continue
                             # totals/over: latwiejsza = mniejsza linia -> YES(l1)+NO(l2)
@@ -146,12 +164,12 @@ def collect(tags, pages):
                                 ty, tn, py, pn = y2, n1, p2y, p1n
                             if py <= 0 or pn <= 0 or py + pn > 1.06:
                                 continue
-                            local.append((py + pn, f"{l1}/{l2}", ty, tn))
+                            local.append((py + pn, f"{l1}/{l2}", ty, tn, max(e1, e2)))
                     local.sort(key=lambda x: x[0])
-                    for _, lines, y1, n2 in local[:6]:
+                    for _, lines, y1, n2, e_end in local[:6]:
                         if len(mono) >= 4000:
                             break
-                        mono.append((ev.get("slug"), lines, y1, n2))
+                        mono.append((ev.get("slug"), lines, y1, n2, e_end))
                 if len(ml) >= 3:
                     multi.append((ev.get("slug"), ml))
     return mono, multi, dup, events
