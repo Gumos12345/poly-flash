@@ -336,7 +336,7 @@ def main():
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
     ap.add_argument("--from-balance", type=float, default=0.0,
-                    help="live: licz stawke z realnego salda USDC (0.95 = 95% salda)")
+                    help="live: licz stawke z realnego salda USDC (0.95 = 95 procent salda)")
     ap.add_argument("--per-event", action="store_true",
                     help="licz tylko jedna pare na mecz (realistyczny PnL)")
     ap.add_argument("--fetch-mo", action="store_true",
