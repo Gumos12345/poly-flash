@@ -157,7 +157,14 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
             await ws.send(json.dumps({"assets_ids": ids[i:i + 400], "type": "market"}))
             await asyncio.sleep(0.2)
         print(f"subskrypcja: {len(ids)} tokenow w {max(1, (len(ids) + 399) // 400)} paczkach")
+        import time as _t
+        _last = _t.time()
+        _msgs = 0
         async for raw in ws:
+            _msgs += 1
+            if _t.time() - _last > 60:
+                print(f"[STAT] dziala | wiadomosci={_msgs} | tokenow z cena={len(asks)}")
+                _last, _msgs = _t.time(), 0
             try:
                 msg = json.loads(raw)
             except Exception:
@@ -216,8 +223,9 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
 
     while True:
         try:
-            async with websockets.connect(url, ping_interval=10, ping_timeout=10,
-                                          open_timeout=20, max_size=2 ** 23) as ws:
+            async with websockets.connect(url, ping_interval=10, ping_timeout=30,
+                                          open_timeout=30, max_size=2 ** 23,
+                                          close_timeout=5) as ws:
                 await session(ws)
             print("[WS] sesja zakonczona -> reconnect")
         except Exception as e:
