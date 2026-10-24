@@ -136,7 +136,7 @@ def selftest():
 
 
 async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
-                min_shares=0.0, max_sum=0.95):
+                min_shares=0.0, max_sum=0.95, max_trades=1):
     try:
         import websockets
     except ImportError:
@@ -149,6 +149,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
     ids = list(index.keys())
     asks = {}
     done = set()        # jedna egzekucja na pare (bez powtorek co tick)
+    trades_done = 0     # licznik wykonanych par (limit przez --max-trades)
     url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
     async def session(ws):
@@ -204,8 +205,13 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                     print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
                           f"(yes={ya:.3f} no={na:.3f}) {info}")
                     if live and sz and pair['label'] not in done:
+                        if max_trades and trades_done >= max_trades:
+                            print(f"   [LIMIT] max {max_trades} transakcji osiagniety - nie kupuje")
+                            done.add(pair['label'])
+                            continue
                         done.add(pair['label'])
-                        print(f"   [ONCE] wykonuje te pare pierwszy raz")
+                        trades_done += 1
+                        print(f"   [ONCE] para {trades_done}/{max_trades or 'inf'}")
                         await execute(pair, ya, na, sz, qy[1], qn[1])
 
     while True:
@@ -268,6 +274,8 @@ def main():
     ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
+    ap.add_argument("--max-trades", type=int, default=1,
+                    help="ile par kupic w tej sesji (0 = bez limitu)")
     ap.add_argument("--max-sum", type=float, default=0.95,
                     help="gorny limit sumy cen pary (budzet / min. akcji)")
     ap.add_argument("--min-depth", type=float, default=1.0,
@@ -279,7 +287,8 @@ def main():
     if args.selftest:
         sys.exit(selftest())
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
-                       args.bankroll, args.min_depth, args.min_shares, args.max_sum))
+                       args.bankroll, args.min_depth, args.min_shares, args.max_sum,
+                       args.max_trades))
 
 
 if __name__ == "__main__":
