@@ -142,7 +142,8 @@ def selftest():
 
 
 async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
-                min_shares=0.0, max_sum=0.95, max_trades=1, compound=True, fetch_mo=False):
+                min_shares=0.0, max_sum=0.95, max_trades=1, compound=True,
+                fetch_mo=False, per_event=False):
     try:
         import websockets
     except ImportError:
@@ -227,20 +228,21 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                                 f"koszt ${cost_need:.2f} > bankroll ${bankroll:.2f}")
                     print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
                           f"(yes={ya:.3f} no={na:.3f}) {info}")
-                    if sz and not live and pair['label'] not in done:
-                        done.add(pair['label'])
+                    key = pair['label'].split(' ')[0] if per_event else pair['label']
+                    if sz and not live and key not in done:
+                        done.add(key)
                         paper_pnl += sz['profit']
                         if compound:
                             paper_bank += sz['profit']
                         print(f"   [PAPER] para #{len(done)} zysk ${sz['profit']:+.2f} | "
                               f"bankroll ${paper_bank:.2f} | razem ${paper_pnl:+.2f}")
                         continue
-                    if live and sz and pair['label'] not in done:
+                    if live and sz and key not in done:
                         if max_trades and trades_done >= max_trades:
                             print(f"   [LIMIT] max {max_trades} transakcji osiagniety - nie kupuje")
-                            done.add(pair['label'])
+                            done.add(key)
                             continue
-                        done.add(pair['label'])
+                        done.add(key)
                         trades_done += 1
                         print(f"   [ONCE] para {trades_done}/{max_trades or 'inf'}")
                         await execute(pair, ya, na, sz, qy[1], qn[1])
@@ -306,6 +308,8 @@ def main():
     ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
+    ap.add_argument("--per-event", action="store_true",
+                    help="licz tylko jedna pare na mecz (realistyczny PnL)")
     ap.add_argument("--fetch-mo", action="store_true",
                     help="pobierz min_order_size per rynek (wolny bootstrap, domyslnie 5)")
     ap.add_argument("--compound", action="store_true", default=True,
@@ -325,7 +329,7 @@ def main():
         sys.exit(selftest())
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
                        args.bankroll, args.min_depth, args.min_shares, args.max_sum,
-                       args.max_trades, args.compound, args.fetch_mo))
+                       args.max_trades, args.compound, args.fetch_mo, args.per_event))
 
 
 if __name__ == "__main__":
