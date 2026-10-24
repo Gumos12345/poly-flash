@@ -94,7 +94,8 @@ def collect(tags, pages):
 
     if True:
         if True:
-            for evs in fetched:
+            for _ti, evs in enumerate(fetched):
+              print(f"  [pobrano] {tasks[_ti][0]}: {len(evs)} eventow", flush=True)
               for ev in evs:
                 events += 1
                 ladders, ml = {}, []
