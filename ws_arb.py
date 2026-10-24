@@ -136,7 +136,7 @@ def selftest():
 
 
 async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
-                min_shares=0.0, max_sum=0.95, max_trades=1):
+                min_shares=0.0, max_sum=0.95, max_trades=1, compound=True):
     try:
         import websockets
     except ImportError:
@@ -151,6 +151,8 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
     last = {}          # ostatnio sprawdzone ceny pary (mniej CPU -> pingi nie gina)
     done = set()        # jedna egzekucja na pare (bez powtorek co tick)
     trades_done = 0     # licznik wykonanych par (limit przez --max-trades)
+    paper_pnl = 0.0     # symulowany zysk (dry)
+    paper_bank = bankroll
     url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
     async def session(ws):
@@ -203,7 +205,8 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                     last[idx] = (qy[0], qn[0])
                     ya, na = qy[0], qn[0]
                     need = max(min_shares, pair.get("mo", 5.0))
-                    sz = sizing(ya, na, bankroll, qy[1], qn[1], need)
+                    sz = sizing(ya, na, paper_bank if not live else bankroll,
+                                qy[1], qn[1], need)
                     if sz:
                         info = (f"| N={sz['n']:.0f} akcji (depth {qy[1]:.0f}/{qn[1]:.0f}), "
                                 f"koszt ${sz['cost']:.2f}, zysk ${sz['profit']:.2f}")
@@ -217,6 +220,14 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
                                 f"koszt ${cost_need:.2f} > bankroll ${bankroll:.2f}")
                     print(f"[ARB] {pair['label'][:44]} netto {net * 100:.1f}% "
                           f"(yes={ya:.3f} no={na:.3f}) {info}")
+                    if sz and not live and pair['label'] not in done:
+                        done.add(pair['label'])
+                        paper_pnl += sz['profit']
+                        if compound:
+                            paper_bank += sz['profit']
+                        print(f"   [PAPER] para #{len(done)} zysk ${sz['profit']:+.2f} | "
+                              f"bankroll ${paper_bank:.2f} | razem ${paper_pnl:+.2f}")
+                        continue
                     if live and sz and pair['label'] not in done:
                         if max_trades and trades_done >= max_trades:
                             print(f"   [LIMIT] max {max_trades} transakcji osiagniety - nie kupuje")
@@ -288,6 +299,9 @@ def main():
     ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
+    ap.add_argument("--compound", action="store_true", default=True,
+                    help="dry: dokladaj zysk do bankrolla (all-in symulacja)")
+    ap.add_argument("--no-compound", dest="compound", action="store_false")
     ap.add_argument("--max-trades", type=int, default=1,
                     help="ile par kupic w tej sesji (0 = bez limitu)")
     ap.add_argument("--max-sum", type=float, default=0.95,
@@ -302,7 +316,7 @@ def main():
         sys.exit(selftest())
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
                        args.bankroll, args.min_depth, args.min_shares, args.max_sum,
-                       args.max_trades))
+                       args.max_trades, args.compound))
 
 
 if __name__ == "__main__":
