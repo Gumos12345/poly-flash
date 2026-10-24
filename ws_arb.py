@@ -23,7 +23,7 @@ import sys
 import mono  # reuse: collect(), ask(), fees
 
 
-def pairs_from_events(tags, pages, min_edge, min_depth, max_sum=0.95):
+def pairs_from_events(tags, pages, min_edge, min_depth, max_sum=0.95, fetch_mo=False):
     """Pary MONO + DUP. max_sum = gorny limit sumy cen (budzet / min. akcji)."""
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]   # KLUCZOWE: lista, nie string
     print(f"tagi: {len(tag_list)}")
@@ -60,6 +60,12 @@ def pairs_from_events(tags, pages, min_edge, min_depth, max_sum=0.95):
 
     print(f"eventy: {events} | par MONO: {n_mono} | par DUP: {len(pairs) - n_mono} "
           f"| tokenow: {len(index)}")
+
+    if not fetch_mo:
+        for pr in pairs:
+            pr["mo"] = 5.0
+        print(f"min_order_size: 5.0 (domyslnie; --fetch-mo sprawdza per rynek)")
+        return pairs, index
 
     # min_order_size per rynek: WS go nie niesie, wiec pobieramy raz przez REST
     toks = {t for pr in pairs for t in (pr["y"], pr["n"])}
@@ -136,13 +142,13 @@ def selftest():
 
 
 async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
-                min_shares=0.0, max_sum=0.95, max_trades=1, compound=True):
+                min_shares=0.0, max_sum=0.95, max_trades=1, compound=True, fetch_mo=False):
     try:
         import websockets
     except ImportError:
         print("brak modulu websockets. Zainstaluj: pip install websockets")
         return
-    pairs, index = pairs_from_events(tags, pages, min_edge, min_depth, max_sum)
+    pairs, index = pairs_from_events(tags, pages, min_edge, min_depth, max_sum, fetch_mo)
     if not pairs:
         print("brak kandydatow")
         return
@@ -300,6 +306,8 @@ def main():
     ap.add_argument("--bankroll", type=float, default=4.17)
     ap.add_argument("--min-shares", type=float, default=5.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
+    ap.add_argument("--fetch-mo", action="store_true",
+                    help="pobierz min_order_size per rynek (wolny bootstrap, domyslnie 5)")
     ap.add_argument("--compound", action="store_true", default=True,
                     help="dry: dokladaj zysk do bankrolla (all-in symulacja)")
     ap.add_argument("--no-compound", dest="compound", action="store_false")
@@ -317,7 +325,7 @@ def main():
         sys.exit(selftest())
     asyncio.run(run_ws(args.tags, args.pages, args.min_edge, args.live, args.stake,
                        args.bankroll, args.min_depth, args.min_shares, args.max_sum,
-                       args.max_trades, args.compound))
+                       args.max_trades, args.compound, args.fetch_mo))
 
 
 if __name__ == "__main__":
