@@ -173,6 +173,15 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
             bal_broker = _bot.LiveBroker()
         except Exception as e:
             print(f"[BAL] nie moge utworzyc klienta: {e!r}")
+            return
+        _usd = usdc_balance(bal_broker)
+        print(f"[LIVE] saldo USDC: ${_usd:.2f} | bankroll={bankroll} | from_balance={from_balance}")
+        if _usd < 2.5:
+            print("[STOP] za malo srodkow: potrzeba min ~2.5 USD na pare (2 nogi x 1 USD)")
+            return
+        if from_balance and bankroll > _usd:
+            print(f"[LIVE] bankroll {bankroll} > saldo {_usd:.2f} -> ograniczam do salda")
+            bankroll = _usd
     ids = list(index.keys())
     asks = {}
     last = {}          # ostatnio sprawdzone ceny pary (mniej CPU -> pingi nie gina)
@@ -294,7 +303,7 @@ async def run_ws(tags, pages, min_edge, live, stake, bankroll, min_depth=1.0,
 
 
 async def execute(p, ya, na, sz, dy=0.0, dn=0.0):
-    """Kupno obu nog w ROWNEJ liczbie akcji (market order, min ~1 USD/noga)."""
+    """Kupno obu nog w ROWNEJ liczbie akcji. Jesli wejdzie tylko jedna - natychmiast sprzedaj."""
     try:
         import bot_v2_dry_v3 as bot
     except ImportError:
@@ -302,35 +311,50 @@ async def execute(p, ya, na, sz, dy=0.0, dn=0.0):
         return
     broker = bot.LiveBroker()
     n = sz["n"]
-    first = None
-    # najpierw noga z ciensza ksiazka (latwiej zniknie), gruba na koncu
     legs = sorted([(p["y"], ya, dy), (p["n"], na, dn)], key=lambda x: x[2])
-    for i, (tok, price, _depth) in enumerate(legs):
+    filled = []
+
+    for tok, price, _depth in legs:
         usd = round(n * price, 2)
+        if usd < 1.0:
+            print(f"  [SKIP] noga {tok[:8]} usd=${usd:.2f} < 1 USD (min zlecenia)")
+            continue
         try:
             r = broker.buy_no(tok, usd, price, bot.get_tick_size(tok), 0.0)
             ok = isinstance(r, dict) and r.get("ok")
-            print("  [LIVE]", str(r)[:140])
+            print("  [LIVE]", str(r)[:150])
         except Exception as e:
             ok, r = False, None
             print("  [LIVE ERR]", repr(e))
-        if i == 0 and ok:
-            first = (tok, float(r.get("shares") or 0.0))
-        if i == 1 and not ok and first and first[1] > 0:
-            # AWARYJNIE: druga noga nie weszla -> sprzedaj pierwsza
-            print("  [UNWIND] druga noga nie weszla, sprzedaje pierwsza")
-            try:
-                from py_clob_client.clob_types import MarketOrderArgs
-                from py_clob_client.order_builder.constants import SELL
-                bid = bot.get_bid(first[0])
-                mo = MarketOrderArgs(token_id=first[0], amount=first[1], side=SELL,
-                                     price=round(max(0.01, bid), 4),
-                                     order_type=broker.OrderType.FAK)
-                r2 = broker.client.post_order(broker.client.create_market_order(mo),
-                                              broker.OrderType.FAK)
-                print("  [UNWIND]", str(r2)[:140])
-            except Exception as e:
-                print("  [UNWIND ERR] sprzedaj recznie:", repr(e))
+        if ok:
+            filled.append((tok, float(r.get("shares") or 0.0), price))
+
+    if len(filled) == 2:
+        print("  [ARB OK] obie nogi kupione -> trzymam do rozliczenia")
+        return
+    if len(filled) == 0:
+        print("  [ARB NONE] zadna noga nie weszla - nic nie robie")
+        return
+
+    tok, shares, entry = filled[0]
+    print(f"  [UNWIND] weszla tylko jedna noga ({shares:.2f} akcji) - sprzedaje")
+    if shares <= 0:
+        print("  [UNWIND ERR] shares=0 - sprawdz portfel RECZNIE")
+        return
+    try:
+        from py_clob_client.clob_types import MarketOrderArgs
+        from py_clob_client.order_builder.constants import SELL
+        bid = bot.get_bid(tok)
+        if bid <= 0.01:
+            print("  [UNWIND ERR] brak bidu - SPRZEDAJ RECZNIE w UI!")
+            return
+        mo = MarketOrderArgs(token_id=tok, amount=shares, side=SELL,
+                             price=round(bid, 4), order_type=broker.OrderType.FAK)
+        r2 = broker.client.post_order(broker.client.create_market_order(mo),
+                                      broker.OrderType.FAK)
+        print("  [UNWIND]", str(r2)[:150])
+    except Exception as e:
+        print("  [UNWIND ERR] SPRZEDAJ RECZNIE w UI:", repr(e))
 
 
 def main():
@@ -340,7 +364,7 @@ def main():
     ap.add_argument("--min-edge", type=float, default=0.01)
     ap.add_argument("--stake", type=float, default=1.0)
     ap.add_argument("--bankroll", type=float, default=4.17)
-    ap.add_argument("--min-shares", type=float, default=5.0,
+    ap.add_argument("--min-shares", type=float, default=1.0,
                     help="min. liczba akcji na noge (Polymarket: 5)")
     ap.add_argument("--max-hold-h", type=float, default=0.0,
                     help="tylko pary rozliczane w ciagu N h (szybszy zwrot kapitalu)")
