@@ -283,6 +283,32 @@ class BitgetBroker:
         except Exception:
             pass
 
+    def place_tpsl(self, direction, entry, size, tp_px, sl_px):
+        """Sklada TP i SL NA GIELDZIE (zostaja po ubiciu bota)."""
+        hold = "long" if direction == "long" else "short"
+        ok = 0
+        for plan, px in (("pos_profit", tp_px), ("pos_loss", sl_px)):
+            body = {"symbol": SYMBOL, "productType": PRODUCT, "marginCoin": "USDT",
+                    "planType": plan, "triggerPrice": str(round(px, 2)),
+                    "triggerType": "mark_price", "holdSide": hold,
+                    "size": str(size), "executePrice": "0"}
+            try:
+                r = api("POST", "/api/v2/mix/order/place-tpsl-order", body=body, private=True)
+                log(f"[TPSL] {plan} @ {px:.2f} -> {r.get('code')} {r.get('msg')}")
+                if r.get("code") == "00000":
+                    ok += 1
+            except Exception as e:
+                log(f"[TPSL-ERR] {plan} {e!r}")
+        return ok == 2
+
+    def cancel_tpsl(self):
+        try:
+            api("POST", "/api/v2/mix/order/cancel-plan-order",
+                body={"symbol": SYMBOL, "productType": PRODUCT, "marginCoin": "USDT"},
+                private=True)
+        except Exception:
+            pass
+
     def _wait_fill(self, order_id, want, timeout=None):
         end = time.time() + (timeout if timeout else self.wait_s)
         while time.time() < end:
@@ -488,6 +514,7 @@ def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
                         log(f"[{why}] zamykam {st['pos'].upper()} entry={st['entry']:.2f} "
                             f"close={prev[4]:.2f}")
                         if live:
+                            broker.cancel_tpsl()
                             cur = broker.position()
                             if cur:
                                 broker.close_all(cur, prev[4])
@@ -530,6 +557,11 @@ def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
                             st["tier"] = z["tier"]
                             st["atr"] = atrs[-1] or 0
                             st["last_entry_ts"] = prev[0]
+                            _atr = atrs[-1] or 0
+                            _e = res["price"]
+                            _tp = round(_e + tp_mult * _atr, 2) if direction == "long" else round(_e - tp_mult * _atr, 2)
+                            _sl = round(_e - sl_mult * _atr, 2) if direction == "long" else round(_e + sl_mult * _atr, 2)
+                            broker.place_tpsl(direction, _e, res["size"], _tp, _sl)
                             log(f"[OPEN] {direction} {res['size']} @ {res['price']:.2f} "
                                 f"({'maker' if res['maker'] else 'taker'})")
                     else:
