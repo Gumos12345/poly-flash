@@ -291,10 +291,10 @@ class BitgetBroker:
             "holdSide": hold,
             "stopSurplusTriggerPrice": str(round(tp_px, 2)),
             "stopSurplusTriggerType": "mark_price",
-            "stopSurplusExecutePrice": "0",
+            "stopSurplusExecutePrice": str(round(tp_px, 2)),
             "stopLossTriggerPrice": str(round(sl_px, 2)),
             "stopLossTriggerType": "mark_price",
-            "stopLossExecutePrice": "0",
+            "stopLossExecutePrice": str(round(sl_px, 2)),
         }
         try:
             r = api("POST", "/api/v2/mix/order/place-pos-tpsl", body=body, private=True)
