@@ -267,7 +267,7 @@ class BitgetBroker:
                 "orderType": order_type}
         if order_type == "limit":
             body["price"] = str(price)
-            body["force"] = "post_only" if self.post_only else "gtc"
+            body["force"] = "gtc"
         else:
             body["force"] = "ioc"
         if self.hedge:
@@ -309,8 +309,12 @@ class BitgetBroker:
             log(f"[OPEN-SKIP] size {size} < {MIN_SIZE}")
             return None
         side = "buy" if direction == "long" else "sell"
+        # cena pasywna: BUY 1 tick ponizej, SELL 1 tick powyzej -> maker, bez post_only
+        tick = 0.01
+        px = round(price - tick, 2) if side == "buy" else round(price + tick, 2)
+        px = max(0.01, min(px, 10_000_000.0))
         try:
-            r = self._order(side, "open", size, price=price, order_type="limit")
+            r = self._order(side, "open", size, price=px, order_type="limit")
             oid = (r.get("data") or {}).get("orderId")
             log(f"[LIMIT-OPEN] {direction} {size} @ {price:.2f} code={r.get('code')} id={oid}")
             if oid:
@@ -335,7 +339,9 @@ class BitgetBroker:
         side = "sell" if pos["side"] == "long" else "buy"
         size = pos["size"]
         try:
-            r = self._order(side, "close", size, price=price, order_type="limit")
+            tick = 0.01
+            cpx = round(price + tick, 2) if side == "sell" else round(price - tick, 2)
+            r = self._order(side, "close", size, price=max(0.01, cpx), order_type="limit")
             oid = (r.get("data") or {}).get("orderId")
             log(f"[LIMIT-CLOSE] {pos['side']} {size} @ {price:.2f} code={r.get('code')} id={oid}")
             if oid:
