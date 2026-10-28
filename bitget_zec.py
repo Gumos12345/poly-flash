@@ -448,7 +448,7 @@ def save_state(st):
 
 
 def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
-             tp_mult, sl_mult, invert, post_only, wait_s):
+             tp_mult, sl_mult, invert, post_only, wait_s, catchup=3):
     st = load_state()
     broker = BitgetBroker(leverage, margin_mode, size_pct, post_only, wait_s) if live else None
     log(f"[START {'LIVE' if live else 'PAPER'}] {SYMBOL} {GRAN} x{leverage} "
@@ -490,6 +490,14 @@ def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
                         st["pos"] = None
                         st["entry"] = 0.0
                         save_state(st)
+
+                # catch-up: strefa z ostatnich N swiec, gdy nie ma pozycji
+                if not fired and st["pos"] is None and catchup > 0 and not st.get("caught"):
+                    recent = [z for z in zs if z["ts"] >= rows[-1 - catchup][0]]
+                    if recent:
+                        fired = [max(recent, key=lambda x: x["tier"])]
+                        log(f"[CATCHUP] strefa z ostatnich {catchup} swiec")
+                st["caught"] = True
 
                 if fired and st["pos"] is None:
                     z = max(fired, key=lambda x: x["tier"])
@@ -550,6 +558,8 @@ def main():
     ap.add_argument("--market-entry", dest="post_only", action="store_false",
                     help="taker zamiast LIMIT maker")
     ap.add_argument("--wait", type=int, default=20, help="ile s czekac na fill limitu")
+    ap.add_argument("--catchup", type=int, default=3,
+                    help="przy starcie wejdz, jesli strefa byla w ostatnich N swiecach (0=off)")
     ap.set_defaults(invert=True, post_only=True)
     args = ap.parse_args()
 
@@ -558,10 +568,12 @@ def main():
                  args.min_tier, maker=args.post_only)
     elif args.paper:
         run_loop(False, args.leverage, args.size_pct, args.margin_mode, args.poll,
-                 args.min_tier, args.tp, args.sl, args.invert, args.post_only, args.wait)
+                 args.min_tier, args.tp, args.sl, args.invert, args.post_only, args.wait,
+                 args.catchup)
     elif args.live:
         run_loop(True, args.leverage, args.size_pct, args.margin_mode, args.poll,
-                 args.min_tier, args.tp, args.sl, args.invert, args.post_only, args.wait)
+                 args.min_tier, args.tp, args.sl, args.invert, args.post_only, args.wait,
+                 args.catchup)
     else:
         ap.print_help()
 
