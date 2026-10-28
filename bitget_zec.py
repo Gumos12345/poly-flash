@@ -303,7 +303,27 @@ class BitgetBroker:
                 return True
         except Exception as e:
             log(f"[TPSL-ERR] {e!r}")
-        return False
+            return self._place_tpsl_fallback(direction, size, tp_px, sl_px)
+        return self._place_tpsl_fallback(direction, size, tp_px, sl_px, only_if_failed=True)
+
+    def _place_tpsl_fallback(self, direction, size, tp_px, sl_px, only_if_failed=False):
+        """Awaryjnie: dwa osobne zlecenia plan (pos_profit, pos_loss)."""
+        hold = "long" if direction == "long" else "short"
+        ok = 0
+        for plan, px in (("pos_profit", tp_px), ("pos_loss", sl_px)):
+            body = {"marginCoin": "USDT", "productType": PRODUCT, "symbol": SYMBOL,
+                    "marginMode": self.margin_mode, "holdSide": hold,
+                    "delegateType": "all", "planType": plan,
+                    "triggerPrice": str(round(px, 2)), "triggerType": "mark_price",
+                    "executePrice": str(round(px, 2)), "size": str(size)}
+            try:
+                r = api("POST", "/api/v2/mix/order/place-tpsl-order", body=body, private=True)
+                log(f"[TPSL-FB] {plan} @ {px:.2f} -> {r.get('code')} {r.get('msg')}")
+                if r.get("code") == "00000":
+                    ok += 1
+            except Exception as e:
+                log(f"[TPSL-FB-ERR] {plan} {e!r}")
+        return ok == 2
 
     def cancel_tpsl(self):
         try:
