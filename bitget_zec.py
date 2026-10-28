@@ -284,22 +284,26 @@ class BitgetBroker:
             pass
 
     def place_tpsl(self, direction, entry, size, tp_px, sl_px):
-        """Sklada TP i SL NA GIELDZIE (zostaja po ubiciu bota)."""
+        """TP/SL dla POZYCJI (place-pos-tpsl). Zostaja na gieldzie po ubiciu bota."""
         hold = "long" if direction == "long" else "short"
-        ok = 0
-        for plan, px in (("pos_profit", tp_px), ("pos_loss", sl_px)):
-            body = {"symbol": SYMBOL, "productType": PRODUCT, "marginCoin": "USDT",
-                    "planType": plan, "triggerPrice": str(round(px, 2)),
-                    "triggerType": "mark_price", "holdSide": hold,
-                    "size": str(size), "executePrice": "0"}
-            try:
-                r = api("POST", "/api/v2/mix/order/place-tpsl-order", body=body, private=True)
-                log(f"[TPSL] {plan} @ {px:.2f} -> {r.get('code')} {r.get('msg')}")
-                if r.get("code") == "00000":
-                    ok += 1
-            except Exception as e:
-                log(f"[TPSL-ERR] {plan} {e!r}")
-        return ok == 2
+        body = {
+            "marginCoin": "USDT", "productType": PRODUCT, "symbol": SYMBOL,
+            "holdSide": hold,
+            "stopSurplusTriggerPrice": str(round(tp_px, 2)),
+            "stopSurplusTriggerType": "mark_price",
+            "stopSurplusExecutePrice": "0",
+            "stopLossTriggerPrice": str(round(sl_px, 2)),
+            "stopLossTriggerType": "mark_price",
+            "stopLossExecutePrice": "0",
+        }
+        try:
+            r = api("POST", "/api/v2/mix/order/place-pos-tpsl", body=body, private=True)
+            log(f"[TPSL] TP={tp_px:.2f} SL={sl_px:.2f} -> {r.get('code')} {r.get('msg')}")
+            if r.get("code") == "00000":
+                return True
+        except Exception as e:
+            log(f"[TPSL-ERR] {e!r}")
+        return False
 
     def cancel_tpsl(self):
         try:
@@ -485,7 +489,20 @@ def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
         f"size={size_pct*100:.0f}% {'ODWROCONY' if invert else 'normal'} "
         f"TP={tp_mult}x SL={sl_mult}x ATR min_tier={min_tier}")
     if live:
-        log(f"[START] saldo={broker.balance_usdt():.2f} USDT | pozycja={broker.position()}")
+        _pos = broker.position()
+        log(f"[START] saldo={broker.balance_usdt():.2f} USDT | pozycja={_pos}")
+        if _pos:
+            _atr0 = 0
+            try:
+                _r = candles(60)
+                _atr0 = atr(_r)[-1] or 0
+            except Exception:
+                pass
+            _e = _pos["entry"]
+            _tp = round(_e + tp_mult * _atr0, 2) if _pos["side"] == "long" else round(_e - tp_mult * _atr0, 2)
+            _sl = round(_e - sl_mult * _atr0, 2) if _pos["side"] == "long" else round(_e + sl_mult * _atr0, 2)
+            log(f"[RECOVER] pozycja bez TP/SL -> dokladam TP={_tp} SL={_sl}")
+            broker.place_tpsl(_pos["side"], _e, _pos["size"], _tp, _sl)
 
     while True:
         try:
