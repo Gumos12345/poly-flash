@@ -26,6 +26,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import sys
 import time
@@ -304,7 +305,10 @@ class BitgetBroker:
         if bal <= 0:
             log("[OPEN-SKIP] saldo 0")
             return None
-        size = self._round_size(bal * self.size_pct * self.leverage / price)
+        usable = bal * self.size_pct * 0.95          # bufor na fee (naprawa 40762)
+        raw = usable * self.leverage / price
+        size = math.floor(raw / SIZE_STEP) * SIZE_STEP
+        size = round(size, 3)
         if size < MIN_SIZE:
             log(f"[OPEN-SKIP] size {size} < {MIN_SIZE}")
             return None
@@ -448,7 +452,7 @@ def save_state(st):
 
 
 def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
-             tp_mult, sl_mult, invert, post_only, wait_s, catchup=3):
+             tp_mult, sl_mult, invert, post_only, wait_s, catchup=3, enter_active=True):
     st = load_state()
     broker = BitgetBroker(leverage, margin_mode, size_pct, post_only, wait_s) if live else None
     log(f"[START {'LIVE' if live else 'PAPER'}] {SYMBOL} {GRAN} x{leverage} "
@@ -491,13 +495,24 @@ def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
                         st["entry"] = 0.0
                         save_state(st)
 
-                # catch-up: strefa z ostatnich N swiec, gdy nie ma pozycji
-                if not fired and st["pos"] is None and catchup > 0 and not st.get("caught"):
+                # aktywna strefa teraz (K w przedziale) -> wejdz od razu
+                if not fired and st["pos"] is None and enter_active:
+                    b_now, s_now = tiers(k_line[-1])
+                    tier_now = max(b_now, s_now)
+                    if tier_now >= min_tier:
+                        side_now = "buy" if b_now >= min_tier else "sell"
+                        cooldown_ok = (prev[0] - st.get("last_entry_ts", 0)) >= 2 * 60000
+                        if cooldown_ok:
+                            fired = [{"idx": len(rows) - 2, "ts": prev[0], "price": prev[4],
+                                      "side": side_now, "tier": tier_now, "k": k_line[-1]}]
+                            log(f"[ACTIVE] K={k_line[-1]:.1f} tier={tier_now} -> wchodze teraz")
+
+                # catch-up: strefa z ostatnich N swiec
+                if not fired and st["pos"] is None and catchup > 0:
                     recent = [z for z in zs if z["ts"] >= rows[-1 - catchup][0]]
                     if recent:
                         fired = [max(recent, key=lambda x: x["tier"])]
                         log(f"[CATCHUP] strefa z ostatnich {catchup} swiec")
-                st["caught"] = True
 
                 if fired and st["pos"] is None:
                     z = max(fired, key=lambda x: x["tier"])
@@ -514,6 +529,7 @@ def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
                             st["size"] = res["size"]
                             st["tier"] = z["tier"]
                             st["atr"] = atrs[-1] or 0
+                            st["last_entry_ts"] = prev[0]
                             log(f"[OPEN] {direction} {res['size']} @ {res['price']:.2f} "
                                 f"({'maker' if res['maker'] else 'taker'})")
                     else:
@@ -521,6 +537,7 @@ def run_loop(live, leverage, size_pct, margin_mode, poll, min_tier,
                         st["entry"] = z["price"]
                         st["tier"] = z["tier"]
                         st["atr"] = atrs[-1] or 0
+                        st["last_entry_ts"] = prev[0]
                         log(f"[PAPER] otwieram {direction.upper()} @ {z['price']:.2f}")
                     save_state(st)
 
@@ -558,6 +575,9 @@ def main():
     ap.add_argument("--market-entry", dest="post_only", action="store_false",
                     help="taker zamiast LIMIT maker")
     ap.add_argument("--wait", type=int, default=20, help="ile s czekac na fill limitu")
+    ap.add_argument("--enter-active", dest="enter_active", action="store_true", default=True,
+                    help="wchodz od razu w AKTYWNA strefe (K w przedziale), nie czekaj na nowa")
+    ap.add_argument("--no-enter-active", dest="enter_active", action="store_false")
     ap.add_argument("--catchup", type=int, default=3,
                     help="przy starcie wejdz, jesli strefa byla w ostatnich N swiecach (0=off)")
     ap.set_defaults(invert=True, post_only=True)
@@ -569,11 +589,11 @@ def main():
     elif args.paper:
         run_loop(False, args.leverage, args.size_pct, args.margin_mode, args.poll,
                  args.min_tier, args.tp, args.sl, args.invert, args.post_only, args.wait,
-                 args.catchup)
+                 args.catchup, args.enter_active)
     elif args.live:
         run_loop(True, args.leverage, args.size_pct, args.margin_mode, args.poll,
                  args.min_tier, args.tp, args.sl, args.invert, args.post_only, args.wait,
-                 args.catchup)
+                 args.catchup, args.enter_active)
     else:
         ap.print_help()
 
