@@ -29,6 +29,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -84,8 +85,16 @@ def api(method, path, params=None, body=None, private=False, timeout=20):
         req.add_header("ACCESS-SIGN", _sign(ts, method, path + qs, data.decode() if data else "", s))
         req.add_header("ACCESS-TIMESTAMP", ts)
         req.add_header("ACCESS-PASSPHRASE", p)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()[:400]
+        except Exception:
+            pass
+        raise RuntimeError(f"HTTP {e.code}: {body}") from None
 
 
 def candles(limit=500):
@@ -258,9 +267,7 @@ class BitgetBroker:
                 "orderType": order_type}
         if order_type == "limit":
             body["price"] = str(price)
-            body["force"] = "gtc"
-            if self.post_only:
-                body["postOnly"] = "true"
+            body["force"] = "post_only" if self.post_only else "gtc"
         else:
             body["force"] = "ioc"
         if self.hedge:
