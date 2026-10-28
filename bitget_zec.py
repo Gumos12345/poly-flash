@@ -288,7 +288,7 @@ class BitgetBroker:
         hold = "long" if direction == "long" else "short"
         body = {
             "marginCoin": "USDT", "productType": PRODUCT, "symbol": SYMBOL,
-            "holdSide": hold,
+            "marginMode": self.margin_mode, "holdSide": hold, "delegateType": "all",
             "stopSurplusTriggerPrice": str(round(tp_px, 2)),
             "stopSurplusTriggerType": "mark_price",
             "stopSurplusExecutePrice": str(round(tp_px, 2)),
