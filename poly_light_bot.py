@@ -102,6 +102,21 @@ def taker_fee(price, rate=0.07):
     return rate * price * (1.0 - price)
 
 
+def resolved_outcome(slug, side):
+    """1.0 = wygrana, 0.0 = przegrana, None = jeszcze nierozstrzygniete."""
+    try:
+        d = get(f"{GAMMA}/markets", {"slug": slug})
+        m = d[0] if isinstance(d, list) and d else None
+        if not m or not m.get("closed"):
+            return None
+        outs = json.loads(m["outcomes"])
+        pr = json.loads(m["outcomePrices"])
+        idx = [str(o).strip().lower() for o in outs].index(side)
+        return 1.0 if float(pr[idx]) > 0.5 else 0.0
+    except Exception:
+        return None
+
+
 class Tracker:
     """Statystyki: transakcje, winrate, PnL."""
 
@@ -163,6 +178,8 @@ def main():
     ap.add_argument("--stake", type=float, default=2.0)
     ap.add_argument("--cooldown", type=int, default=60)
     ap.add_argument("--poll", type=float, default=1.0)
+    ap.add_argument("--hold-to-end", action="store_true",
+                    help="trzymaj do rozstrzygniecia (bez TP/SL)")
     args = ap.parse_args()
 
     broker = bot = None
@@ -192,7 +209,19 @@ def main():
                 mk_cache["ts"] = now
             mk = mk_cache["mk"]
 
-            if tr.open_pos:
+            if tr.open_pos and args.hold_to_end:
+                p = tr.open_pos
+                out = resolved_outcome(p["slug"], p["side"])
+                if out is not None:
+                    tr.close(out, "rozstrzygniecie")
+                else:
+                    bid = price_of(p["token"], "sell")
+                    log(f"  TRZYAM {p['side'].upper()} entry={p['entry']:.3f} bid={bid:.3f} "
+                        f"({now - p['ts']:.0f}s) | {tr.summary()}")
+                    time.sleep(args.poll)
+                    continue
+
+            if tr.open_pos and not args.hold_to_end:
                 p = tr.open_pos
                 bid = price_of(p["token"], "sell")
                 held = now - p["ts"]
