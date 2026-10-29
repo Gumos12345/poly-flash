@@ -211,6 +211,21 @@ class Stats:
                 f"WR={self.winrate:.1f}% PnL=${self.pnl:+.3f}")
 
 
+def fair_value(move_pct, secs_left, window_total=300):
+    """
+    Ile NAPRAWDE warte jest 'Up' po ruchu move_pct w pozostalym czasie.
+    Model: pozostaly czas decyduje o wariancji. Maly ruch na poczatku = ~50%.
+    Im blizej konca i im wiekszy ruch, tym blizej 1.0/0.0.
+    """
+    frac = max(0.0, min(1.0, secs_left / window_total))     # ile czasu zostalo
+    # im wiecej czasu zostalo, tym mniejsza pewnosc ze ruch sie utrzyma
+    conf = (1.0 - frac) ** 0.5
+    # ruch w % -> odchylenie (0.2% => ~0.5 sigma)
+    sigma = abs(move_pct) / 0.2
+    prob = 0.5 + min(0.45, 0.5 * conf * min(1.0, sigma / 2.0))
+    return prob if move_pct > 0 else 1.0 - prob
+
+
 def signals_agree(hist, window, threshold, asset_px):
     """
     3 niezalezne sygnaly -> wymagana zgoda >=2.
@@ -253,7 +268,9 @@ def signals_agree(hist, window, threshold, asset_px):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true")
-    ap.add_argument("--hold-to-end", action="store_true")
+    ap.add_argument("--hold-to-end", dest="hold_to_end", action="store_true", default=True,
+                    help="trzymaj do rozstrzygniecia (domyslnie TAK)")
+    ap.add_argument("--no-hold", dest="hold_to_end", action="store_false")
     ap.add_argument("--threshold", type=float, default=0.002, help="skok jako %% ceny (0.002=0.2%%)")
     ap.add_argument("--window", type=int, default=20)
     ap.add_argument("--max-entry", type=float, default=0.80)
@@ -263,6 +280,10 @@ def main():
     ap.add_argument("--stake", type=float, default=2.0)
     ap.add_argument("--cooldown", type=int, default=45)
     ap.add_argument("--min-hours-n", type=int, default=3)
+    ap.add_argument("--min-edge", type=float, default=0.04,
+                    help="min. przewaga fair-ask (0.04 = 4 centy)")
+    ap.add_argument("--max-open", type=int, default=2,
+                    help="max pozycji naraz (aktywa sa skorelowane!)")
     ap.add_argument("--poll", type=float, default=2.0)
     args = ap.parse_args()
 
@@ -325,14 +346,19 @@ def main():
                 elif bid <= args.stop_bid:
                     st.record(tr, bid, "SL")
                     del open_pos[a]
-                elif held > args.hold:
-                    st.record(tr, bid, "czas")
+                elif held > args.hold and bid > tr["entry"] * 1.03:
+                    st.record(tr, bid, "czas+zysk")
+                    del open_pos[a]
+                elif held > args.hold * 4:
+                    st.record(tr, bid, "czas-awaryjnie")   # tylko po 4x czasie
                     del open_pos[a]
 
             # --- nowe wejscia ---
             hour = time.localtime().tm_hour
             if st.hour_ok(hour, args.min_hours_n):
                 for a in ASSETS:
+                    if len(open_pos) >= args.max_open:
+                        break
                     if a in open_pos or (a, "5m") not in mks:
                         continue
                     if now - last_entry[a] < args.cooldown:
@@ -345,8 +371,19 @@ def main():
                         continue
                     token = mk["tokens"][side]
                     ask = px(token, "buy")
+                    p0 = hist[a][0][1]
+                    move_pct = (pxs[a] - p0) / p0 * 100.0
+                    secs_left = mk["end"] - now
+                    fair = fair_value(abs(move_pct) if side == "up" else -abs(move_pct), secs_left)
+                    edge = fair - ask
                     if not (0 < ask <= args.max_entry):
                         continue
+                    if edge < args.min_edge:
+                        if int(now) % 60 == 0:
+                            log(f"  {a} {side.upper()} pominięte: fair={fair:.2f} ask={ask:.2f} "
+                                f"edge={edge:+.3f} < {args.min_edge}")
+                        continue
+                    log(f"  {a} fair={fair:.2f} ask={ask:.2f} EDGE={edge:+.3f}")
                     shares = args.stake / ask
                     cost = args.stake + shares * fee(ask)
                     tr = {"ts": now, "slug": mk["slug"], "asset": a, "side": side,
