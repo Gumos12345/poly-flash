@@ -89,9 +89,13 @@ def find_market():
 
 
 def price_of(token, side):
-    """side='buy' -> best ask (koszt kupna), side='sell' -> best bid (cena sprzedazy)."""
+    """UWAGA: CLOB ma ODWROCONA semantyke side!
+    side='buy'  -> ASK (cena kupna)      -> /price?side=sell
+    side='sell' -> BID (cena sprzedazy)  -> /price?side=buy
+    """
+    api_side = "sell" if side == "buy" else "buy"
     try:
-        d = get(f"{CLOB}/price", {"token_id": token, "side": side})
+        d = get(f"{CLOB}/price", {"token_id": token, "side": api_side})
         return float(d.get("price") or 0)
     except Exception:
         return 0.0

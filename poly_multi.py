@@ -115,8 +115,14 @@ def updown_markets():
 
 
 def px(token, side):
+    """UWAGA: CLOB ma ODWROCONA semantyke side!
+    side='buy'  -> chcemy ASK (cena kupna)  -> /price?side=sell
+    side='sell' -> chcemy BID (cena sprzedazy) -> /price?side=buy
+    """
+    api_side = "sell" if side == "buy" else "buy"
     try:
-        return float(get(f"{CLOB}/price", {"token_id": token, "side": side}).get("price") or 0)
+        return float(get(f"{CLOB}/price", {"token_id": token,
+                                           "side": api_side}).get("price") or 0)
     except Exception:
         return 0.0
 
