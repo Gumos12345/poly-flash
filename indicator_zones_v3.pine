@@ -1,0 +1,269 @@
+//@version=6
+indicator("BUY SELL 3 Levels - STREFY 80% (v3)", overlay=false, precision=2, max_boxes_count=500, max_labels_count=500)
+
+// ============================ INPUTS ============================
+grpO = "Oscylator"
+rsiLen      = input.int(14, "RSI length", minval=2, group=grpO)
+stochLen    = input.int(14, "Stochastic length", minval=2, group=grpO)
+kSm         = input.int(3, "K smoothing", minval=1, group=grpO)
+dSm         = input.int(3, "D smoothing", minval=1, group=grpO)
+
+grpL = "Poziomy"
+sellLvl     = input.float(70, "Sell", minval=51, maxval=79, group=grpL)
+supSellLvl  = input.float(80, "Super Sell", minval=80, maxval=89, group=grpL)
+megSellLvl  = input.float(90, "Mega Sell", minval=90, maxval=99, group=grpL)
+buyLvl      = input.float(30, "Buy", minval=21, maxval=49, group=grpL)
+supBuyLvl   = input.float(20, "Super Buy", minval=11, maxval=20, group=grpL)
+megBuyLvl   = input.float(10, "Mega Buy", minval=1, maxval=10, group=grpL)
+
+grpF = "Filtry jakosci (podnosza winrate)"
+useEma      = input.bool(true,  "Trend EMA 50/200", group=grpF)
+useVwma     = input.bool(true,  "Cena vs VWMA 50", group=grpF)
+useReversal = input.bool(true,  "Potwierdzenie zwrotu K/D", group=grpF)
+useAtrDist  = input.bool(true,  "Min. dystans od EMA50", group=grpF)
+atrDistMult = input.float(0.5, "Dystans x ATR", minval=0.1, maxval=2.0, step=0.1, group=grpF)
+minZoneGap  = input.float(1.5, "Min. odstep stref x ATR", minval=0.1, maxval=5.0, step=0.1, group=grpF)
+minTier     = input.int(1, "Min tier strefy", minval=1, maxval=3, group=grpF)
+strictMode  = input.bool(false, "TRYB 80%: tylko MEGA + trend + VWMA", group=grpF)
+
+grpZ = "Strefy"
+showZones   = input.bool(true, "Pokaz strefy", group=grpZ)
+zoneLimit   = input.int(3, "Strefy na strone", minval=1, maxval=12, group=grpZ)
+atrLen      = input.int(14, "ATR length", minval=2, group=grpZ)
+zoneWidthA  = input.float(0.35, "Grubosc strefy x ATR", minval=0.05, maxval=3.0, step=0.05, group=grpZ)
+extendBars  = input.int(25, "Przedluzenie w prawo", minval=5, maxval=100, group=grpZ)
+showTargets = input.bool(true, "Rysuj prognozy (pivoty)", group=grpZ)
+pivotLen    = input.int(5, "Pivot lookback", minval=2, maxval=15, group=grpZ)
+
+grpS = "Statystyki"
+stopAtr     = input.float(2.0, "Stop x ATR", minval=0.5, maxval=5.0, step=0.5, group=grpS)
+tpAtr       = input.float(2.0, "Take profit x ATR", minval=0.5, maxval=5.0, step=0.5, group=grpS)
+
+grpSty = "Styl"
+buyCol      = input.color(#089981, "BUY / K", group=grpSty)
+sellCol     = input.color(#f23645, "SELL / D", group=grpSty)
+rsiCol      = input.color(#5b9cf6, "RSI", group=grpSty)
+emaFCol     = input.color(#e8c547, "EMA 50", group=grpSty)
+emaSCol     = input.color(#a67ee8, "EMA 200", group=grpSty)
+showTable   = input.bool(true, "Tabela", group=grpSty)
+showSignals = input.bool(true, "Etykiety sygnalow", group=grpSty)
+
+// ============================ CORE ============================
+rsi      = ta.rsi(close, rsiLen)
+stochRaw = ta.stoch(rsi, rsi, rsi, stochLen)
+k        = ta.sma(stochRaw, kSm)
+d        = ta.sma(k, dSm)
+atr      = ta.atr(atrLen)
+atrSafe  = nz(atr, math.max(high - low, syminfo.mintick))
+emaF     = ta.ema(close, 50)
+emaS     = ta.ema(close, 200)
+vwma50   = ta.vwma(close, 50)
+zoneW    = math.max(atrSafe * zoneWidthA, syminfo.mintick * 2)
+
+buyTier  = na(k) ? 0 : k <= megBuyLvl ? 3 : k <= supBuyLvl ? 2 : k <= buyLvl ? 1 : 0
+sellTier = na(k) ? 0 : k >= megSellLvl ? 3 : k >= supSellLvl ? 2 : k >= sellLvl ? 1 : 0
+
+// ============================ FILTRY ============================
+strictBuy  = not strictMode or buyTier  >= 3
+strictSell = not strictMode or sellTier >= 3
+trendUp    = not useEma or emaF > emaS
+trendDown  = not useEma or emaF < emaS
+overVwma   = not useVwma or close > vwma50
+underVwma  = not useVwma or close < vwma50
+farFromEma = not useAtrDist or math.abs(close - emaF) >= atrDistMult * atrSafe
+
+buyOk  = buyTier  >= minTier and strictBuy  and trendUp   and overVwma  and farFromEma
+sellOk = sellTier >= minTier and strictSell and trendDown and underVwma and farFromEma
+
+bullCross = ta.crossover(k, d)
+bearCross = ta.crossunder(k, d)
+
+// ============================ PIVOTY ============================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var array<float> pivHi = array.new_float()
+var array<float> pivLo = array.new_float()
+if barstate.isconfirmed
+    if not na(ph)
+        array.push(pivHi, ph)
+        if array.size(pivHi) > 20
+            array.shift(pivHi)
+    if not na(pl)
+        array.push(pivLo, pl)
+        if array.size(pivLo) > 20
+            array.shift(pivLo)
+
+// ============================ STREFY ============================
+var array<box> buyBoxes   = array.new<box>()
+var array<float> buyTops  = array.new_float()
+var array<float> buyBots  = array.new_float()
+var array<box> sellBoxes  = array.new<box>()
+var array<float> sellTops = array.new_float()
+var array<float> sellBots = array.new_float()
+
+var int seenBuy  = 0
+var int seenSell = 0
+var float lastBuyZone  = na
+var float lastSellZone = na
+
+newBuy  = false
+newSell = false
+
+f_tierName(bool isBuy, int tier) =>
+    (tier == 3 ? "MEGA " : tier == 2 ? "SUPER " : "") + (isBuy ? "BUY" : "SELL")
+
+f_pushZone(array<box> boxes, array<float> tops, array<float> bots, bool isBuy, int tier) =>
+    float top    = isBuy ? low + zoneW : high
+    float bottom = isBuy ? low : high - zoneW
+    color c      = isBuy ? buyCol : sellCol
+    box b = box.new(bar_index, top, bar_index + extendBars, bottom, border_color = color.new(c, 20), bgcolor = color.new(c, 83), text = f_tierName(isBuy, tier), text_size = size.tiny, text_color = chart.fg_color, force_overlay = true)
+    array.push(boxes, b)
+    array.push(tops, top)
+    array.push(bots, bottom)
+    if array.size(boxes) > zoneLimit
+        box.delete(array.shift(boxes))
+        array.shift(tops)
+        array.shift(bots)
+
+f_refreshZones(array<box> boxes) =>
+    if array.size(boxes) > 0
+        for i = 0 to array.size(boxes) - 1
+            box.set_right(array.get(boxes, i), bar_index + extendBars)
+
+if barstate.isconfirmed
+    if buyTier == 0
+        seenBuy := 0
+    if buyTier > seenBuy
+        seenBuy := buyTier
+        gapBuy = na(lastBuyZone) or math.abs(low - lastBuyZone) >= minZoneGap * atrSafe
+        if buyOk and gapBuy
+            newBuy := true
+            lastBuyZone := low
+            if showZones
+                f_pushZone(buyBoxes, buyTops, buyBots, true, buyTier)
+
+    if sellTier == 0
+        seenSell := 0
+    if sellTier > seenSell
+        seenSell := sellTier
+        gapSell = na(lastSellZone) or math.abs(high - lastSellZone) >= minZoneGap * atrSafe
+        if sellOk and gapSell
+            newSell := true
+            lastSellZone := high
+            if showZones
+                f_pushZone(sellBoxes, sellTops, sellBots, false, sellTier)
+
+    f_refreshZones(buyBoxes)
+    f_refreshZones(sellBoxes)
+
+// ============================ STATYSTYKI (TP/SL) ============================
+var array<int> bw   = array.new_int(4, 0)
+var array<int> bl   = array.new_int(4, 0)
+var array<int> sw   = array.new_int(4, 0)
+var array<int> slc  = array.new_int(4, 0)
+var array<int> pos  = array.new_int(4, 0)
+var array<float> ent = array.new_float(4, na)
+var array<float> stp = array.new_float(4, na)
+var array<float> tgt = array.new_float(4, na)
+
+if barstate.isconfirmed
+    for tier = 1 to 3
+        int p = array.get(pos, tier)
+        float s = array.get(stp, tier)
+        float t = array.get(tgt, tier)
+        if p != 0
+            bool hitStop = p == 1 ? low <= s : high >= s
+            bool hitTp   = p == 1 ? high >= t : low <= t
+            if hitStop
+                if p == 1
+                    array.set(bl, tier, array.get(bl, tier) + 1)
+                else
+                    array.set(slc, tier, array.get(slc, tier) + 1)
+                array.set(pos, tier, 0)
+            else if hitTp
+                if p == 1
+                    array.set(bw, tier, array.get(bw, tier) + 1)
+                else
+                    array.set(sw, tier, array.get(sw, tier) + 1)
+                array.set(pos, tier, 0)
+
+        if array.get(pos, tier) == 0
+            if newBuy and buyTier >= tier
+                array.set(pos, tier, 1)
+                array.set(ent, tier, close)
+                array.set(stp, tier, close - stopAtr * atrSafe)
+                array.set(tgt, tier, close + tpAtr * atrSafe)
+            else if newSell and sellTier >= tier
+                array.set(pos, tier, -1)
+                array.set(ent, tier, close)
+                array.set(stp, tier, close + stopAtr * atrSafe)
+                array.set(tgt, tier, close - tpAtr * atrSafe)
+
+f_txt(array<int> w, array<int> ls, int tier) =>
+    int n = array.get(w, tier) + array.get(ls, tier)
+    n > 0 ? str.tostring(math.round(100.0 * array.get(w, tier) / n)) + "% (n=" + str.tostring(n) + ")" : "brak prob"
+
+// ============================ PROGNOZY (PIVOTY) ============================
+var line tgtLine = na
+if barstate.isconfirmed and showTargets and (newBuy or newSell)
+    float target = na
+    if newBuy and array.size(pivHi) > 0
+        target := array.get(pivHi, array.size(pivHi) - 1)
+    if newSell and array.size(pivLo) > 0
+        target := array.get(pivLo, array.size(pivLo) - 1)
+    if not na(target)
+        line.delete(tgtLine)
+        tgtLine := line.new(bar_index, target, bar_index + extendBars * 2, target, color = newBuy ? buyCol : sellCol, style = line.style_dashed, width = 1, force_overlay = true)
+
+// ============================ RYSOWANIE ============================
+plot(rsi, "RSI", color = rsiCol)
+plot(k, "Stoch RSI K", color = buyCol, linewidth = 2)
+plot(d, "Stoch RSI D", color = sellCol)
+plot(emaF, "EMA 50", color = emaFCol, linewidth = 2, force_overlay = true)
+plot(emaS, "EMA 200", color = emaSCol, linewidth = 2, force_overlay = true)
+plot(vwma50, "VWMA 50", color = color.orange, force_overlay = true)
+
+hline(0, "0", color = color.new(chart.fg_color, 85))
+hline(megBuyLvl, "Mega Buy", color = color.new(buyCol, 45), linestyle = hline.style_dashed)
+hline(supBuyLvl, "Super Buy", color = color.new(buyCol, 55), linestyle = hline.style_dashed)
+hline(buyLvl, "Buy", color = color.new(buyCol, 65), linestyle = hline.style_dashed)
+hline(50, "Neutral", color = color.new(chart.fg_color, 80), linestyle = hline.style_dotted)
+hline(sellLvl, "Sell", color = color.new(sellCol, 65), linestyle = hline.style_dashed)
+hline(supSellLvl, "Super Sell", color = color.new(sellCol, 55), linestyle = hline.style_dashed)
+hline(megSellLvl, "Mega Sell", color = color.new(sellCol, 45), linestyle = hline.style_dashed)
+hline(100, "100", color = color.new(chart.fg_color, 85))
+
+if barstate.isconfirmed and showSignals and newBuy
+    label.new(bar_index, low, "BUY " + str.tostring(buyTier), style = label.style_label_up, color = buyCol, textcolor = color.white, size = size.tiny, force_overlay = true)
+if barstate.isconfirmed and showSignals and newSell
+    label.new(bar_index, high, "SELL " + str.tostring(sellTier), style = label.style_label_down, color = sellCol, textcolor = color.white, size = size.tiny, force_overlay = true)
+
+// ============================ TABELA ============================
+var table tb = table.new(position.top_right, 2, 8, border_width = 1, frame_color = color.new(chart.fg_color, 60), frame_width = 1)
+if barstate.islast and showTable
+    string trendTxt = emaF > emaS ? "WZROST" : "SPADEK"
+    string modeTxt  = strictMode ? "TRYB 80%" : "normalny"
+    table.cell(tb, 0, 0, "STREFA", text_color = chart.fg_color, bgcolor = color.new(chart.fg_color, 85), text_size = size.small)
+    table.cell(tb, 1, 0, "WINRATE (TP/SL)", text_color = chart.fg_color, bgcolor = color.new(chart.fg_color, 85), text_size = size.small)
+    table.cell(tb, 0, 1, "K=" + str.tostring(math.round(nz(k, 0))) + " / " + trendTxt, text_color = emaF > emaS ? buyCol : sellCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 1, 1, modeTxt, text_color = chart.fg_color, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 0, 2, "BUY base", text_color = buyCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 1, 2, f_txt(bw, bl, 1), text_color = buyCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 0, 3, "BUY super", text_color = buyCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 1, 3, f_txt(bw, bl, 2), text_color = buyCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 0, 4, "BUY mega", text_color = buyCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 1, 4, f_txt(bw, bl, 3), text_color = buyCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 0, 5, "SELL base", text_color = sellCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 1, 5, f_txt(sw, slc, 1), text_color = sellCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 0, 6, "SELL super", text_color = sellCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 1, 6, f_txt(sw, slc, 2), text_color = sellCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 0, 7, "SELL mega", text_color = sellCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+    table.cell(tb, 1, 7, f_txt(sw, slc, 3), text_color = sellCol, bgcolor = color.new(chart.fg_color, 92), text_size = size.small)
+
+// ============================ ALERTY ============================
+alertcondition(newBuy, "BUY zone", "BUY zone - strefa zakupu")
+alertcondition(newSell, "SELL zone", "SELL zone - strefa sprzedazy")
+if newBuy
+    alert("BUY tier " + str.tostring(buyTier) + " @ " + str.tostring(close), alert.freq_once_per_bar_close)
+if newSell
+    alert("SELL tier " + str.tostring(sellTier) + " @ " + str.tostring(close), alert.freq_once_per_bar_close)
