@@ -39,6 +39,21 @@ V = dict(id=1, name="S2_TP70_LIVE", tfs=("5m", "15m"), min_px=0.10, max_px=0.90,
          timing={"5m": (0, 300), "15m": (0, 900)})
 LAD = dict(kind="ladder", start_stake=1.25, step_bank=0.01, step_stake=0.01,
            down=False, min_stake=1.25, max_stake=10.0)
+# --- PRESETY = dokladnie te konfiguracje, ktore byly liczone w backteście (n>=200) ---
+PRESETS = {
+    # S2_TP70 (z dryrun2): WR 80%, PF 5.07, exp +13.3$/trade - wariant zamowiony przez uzytkownika
+    "tp70": dict(model="v3", w_mkt=0.15, vol_cushion=1.05, min_px=0.10, max_px=0.90, min_fair=0.45,
+                 edge=0.04, persist=2, depth_x=3, max_spread=0.06, tp=0.70),
+    # S2_F_nopersist: exp +24.4$/trade, PF 2.21, t=12.5 - NAJWYZSZY zysk na transakcje w backteście
+    "best": dict(model="v3", w_mkt=0.15, vol_cushion=1.05, min_px=0.10, max_px=0.90, min_fair=0.45,
+                 edge=0.04, persist=0, depth_x=3, max_spread=0.06, tp=0.80),
+    # S1_MIN_40: WR 78.8%, PF 2.83, t=13.4, DD 9% - najlepszy stosunek zysku do ryzyka
+    "min40": dict(model="v1", w_mkt=0.0, vol_cushion=1.0, min_px=0.40, max_px=0.85, min_fair=0.40,
+                  edge=0.05, persist=0, depth_x=0, max_spread=None, tp=0.80),
+    # S1_IMP_MICRO: exp +21.8$/trade - najlepszy pojedynczy wariant przebiegu 1
+    "micro": dict(model="v3", w_mkt=0.20, vol_cushion=1.0, min_px=0.03, max_px=0.90, min_fair=0.40,
+                  edge=0.04, persist=0, depth_x=3, max_spread=0.06, tp=0.80),
+}
 BOOK_FILE = os.path.join(ROOT, "state", "live_s2.json")
 
 
@@ -178,7 +193,8 @@ def now_s():
 
 
 class LiveRun:
-    def __init__(self, live, bank=50.0, max_order=1.25, max_open=3, daily_stop=0.10, sleep=2.0):
+    def __init__(self, live, bank=50.0, max_order=1.25, max_open=3, daily_stop=0.10, sleep=2.0,
+                 state_name="live_s2"):
         self.live = live
         self.max_order = max_order
         self.max_open = max_open
@@ -186,12 +202,12 @@ class LiveRun:
         self.sleep = sleep
         V["ladder"] = dict(LAD, start_stake=1.25)
         V["start_stake"] = 1.25
-        self.eng = E.Engine([V], "live_s2")          # dane + model + księga (VBook)
+        self.eng = E.Engine([V], state_name)          # dane + model + księga (VBook)
         self.book = self.eng.books[1]
         self.book.lad["start_stake"] = 1.25
         self.eng.start_bank = bank
         self.book.start_bank = bank
-        self.state_path = os.path.join(ROOT, "state", "live_s2.json")
+        self.state_path = os.path.join(ROOT, "state", state_name + ".json")
         self.state = {"start": time.time(), "bank": bank, "day": "", "day_pnl": 0.0,
                       "halt": False, "blocked": {}, "streak": {}}
         self.broker = Broker(live)
@@ -251,9 +267,9 @@ class LiveRun:
                 if edge < V["edge"] or edge > 0.35:
                     continue
                 sp = c.spread.get(side)
-                if sp is None or sp > V["max_spread"]:
+                if V.get("max_spread") is not None and (sp is None or sp > V["max_spread"]):
                     continue
-                if c.depth(side) < V["depth_x"] * st / max(ask, 0.01):
+                if V.get("depth_x") and c.depth(side) < V["depth_x"] * st / max(ask, 0.01):
                     continue
                 k = slug + "|" + side      # JSON wymaga kluczy tekstowych
                 self.state["streak"][k] = self.state["streak"].get(k, 0) + 1
@@ -343,9 +359,11 @@ class LiveRun:
             self.save()
 
     def run(self, minutes=None):
-        print("START %s | S2_TP70 | wszystkie 5m/15m | bankroll %.2f$ stawka %.2f$ | "
-              "drabinka +%.0f%%/+%.0f%% UP | max_order %.2f$ max_open %d"
-              % ("LIVE" if self.live else "PAPER", self.state["bank"], LAD["start_stake"],
+        print("START %s | %s | model %s | px %.2f-%.2f | fair>=%.2f edge>=%.3f persist=%d tp=%s | "
+              "bankroll %.2f$ stawka %.2f$ | drabinka +%.0f%%/+%.0f%% UP | max_order %.2f$ max_open %d"
+              % ("LIVE" if self.live else "PAPER", V["name"], V["model"], V["min_px"], V["max_px"],
+                 V["min_fair"], V["edge"], V["persist"],
+                 ("-" if V["tp"] is None else "%.2f" % V["tp"]), self.state["bank"], LAD["start_stake"],
                  LAD["step_stake"] * 100, LAD["step_bank"] * 100, self.max_order, self.max_open))
         dl = time.time() + minutes * 60 if minutes else None
         cyc = 0
@@ -382,6 +400,10 @@ class LiveRun:
 # ------------------------------- START -------------------------------
 def main(argv=None):
     ap = argparse.ArgumentParser(description="LIVE S2_TP70 (5m/15m, 7 monet)")
+    ap.add_argument("--variant", choices=sorted(PRESETS), default="tp70",
+                    help="ktora strategia z backtestu: tp70 (S2_TP70) | best | min40 | micro")
+    ap.add_argument("--state", default="", help="nazwa pliku stanu (domyslnie live_<wariant>.json)")
+    ap.add_argument("--report", action="store_true", help="tabela wynikow ze stanu i wyjscie")
     ap.add_argument("--check", action="store_true", help="logowanie + saldo + rynki (zero zleceń)")
     ap.add_argument("--paper", action="store_true", help="pełna pętla, zlecenia symulowane (domyślne)")
     ap.add_argument("--live", action="store_true", help="PRAWDZIWE zlecenia (wymaga I_UNDERSTAND_RISK=1 i --yes)")
@@ -396,6 +418,21 @@ def main(argv=None):
     a = ap.parse_args(argv)
     LAD["start_stake"] = a.stake
     LAD["min_stake"] = a.stake
+    V.update(PRESETS[a.variant])
+    st_name = a.state or ("live_%s" % a.variant)
+
+    V["name"] = "S2_%s" % a.variant.upper()
+
+    if a.report:
+        run = LiveRun(False, bank=a.bank, max_order=a.max_order, max_open=a.max_open,
+                      daily_stop=a.daily_stop, state_name=st_name)
+        st = run.book.stats()
+        print("%s | n=%d W/L=%d/%d WR=%.1f%% PnL=%+.2f$ ROI=%.1f%% DD=%.1f%% stawka=%.2f$ kapitał=%.2f$ otw=%d"
+              % (V["name"], st["n"], st["wins"], st["losses"], st["wr"], st["pnl"], st["roi"],
+                 st["dd"], st["stake"], st["equity"], st["open"]))
+        for tf, a2 in sorted(st["per_tf"].items()):
+            print("   %-3s n=%-3d W=%-3d PnL=%+.2f$" % (tf, a2["n"], a2["w"], a2["pnl"]))
+        return 0
 
     if a.check:
         b = Broker(live=True)
@@ -442,7 +479,7 @@ Limity w tym przebiegu: max_order %.2f$, max_open %d, dzienny stop %.0f%% kapita
               % (a.stake, a.max_order, a.max_open, a.daily_stop * 100))
 
     run = LiveRun(a.live, bank=a.bank, max_order=a.max_order, max_open=a.max_open,
-                  daily_stop=a.daily_stop, sleep=a.sleep)
+                  daily_stop=a.daily_stop, sleep=a.sleep, state_name=st_name)
     run.run(minutes=a.minutes or None)
     return 0
 

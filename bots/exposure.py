@@ -51,9 +51,16 @@ def rows_najr(d):
 
 
 def render(max_cost, bank):
-    a = load(os.path.join(ROOT, "state", "live_s2.json"))
+    import glob
+    files = sorted(glob.glob(os.path.join(ROOT, "state", "live_*.json")))
+    r = []
+    for f in files:
+        lbl = os.path.basename(f)[:-5].replace("live_", "").upper()
+        for row in rows_s2(load(f)):
+            r.append((lbl,) + tuple(row[1:]))
     b = load(os.path.join(ROOT, "najr_live_state.json"))
-    r = rows_s2(a) + rows_najr(b)
+    r += rows_najr(b)
+    a = load(os.path.join(ROOT, "state", "live_tp70.json")) or (load(files[0]) if files else None)
     w = shutil.get_terminal_size((80, 24)).columns
     L = []
     L.append("EKSPOZYCJA  %s UTC" % time.strftime("%H:%M:%S", time.gmtime()))
