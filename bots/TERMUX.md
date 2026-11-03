@@ -65,6 +65,22 @@ termux-open RAPORT.html       # otwarcie w przeglądarce (wymaga: pkg install te
 Sam HTML jest samodzielny (CSS+JS w środku) — możesz go też skopiować do pamięci telefonu i otworzyć
 w Chrome. Klikasz nagłówek kolumny = sortowanie.
 
+
+## 6a. Tabelka na żywo w terminalu (bez przeglądarki)
+```bash
+python3 tabelka.py                # jeden rzut tabeli (oba przebiegi)
+python3 tabelka.py --watch        # odświeżanie co 20 s (Ctrl+C = koniec podglądu, bot działa dalej)
+python3 tabelka.py -w -i 10       # co 10 s
+python3 tabelka.py --set 2        # tylko przebieg 42-wariantowy
+python3 tabelka.py --top 40       # wszystkie warianty
+python3 tabelka.py --sort wr      # sortowanie: pnl | wr | n | dd
+python3 tabelka.py -w --trades    # + ostatnie 8 zamkniętych transakcji
+```
+Kolumny: `n` liczba transakcji, `WR%` skuteczność, `PnL$` zysk, `W/L` wygrane/przegrane,
+`ret%` zwrot z bankrolla 50 $, `DD%` maks. obsunięcie, `5m$/15m$` PnL per interwał,
+`px` średnia cena wejścia, `edge` średnia przewaga przy wejściu, `otw` otwarte pozycje.
+Tabelka **tylko czyta** `state/*.json`, więc można ją odpalać równolegle z botem.
+
 ## 7. Stop / wznowienie
 ```bash
 ./stop_all.sh                 # zatrzymuje oba procesy (także tryb start_both) — stan zapisany
