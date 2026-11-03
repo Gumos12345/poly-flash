@@ -358,7 +358,7 @@ def main(argv=None):
         sets.append(("BACKTEST — przebieg 1 (25 wariantów)", D1.VARIANTS))
     if a.sets in ("both", "2"):
         sets.append(("BACKTEST — przebieg 2 (42 warianty)", D2.VARIANTS))
-    blocks, allm = [], []
+    blocks, allm, alltr = [], [], []
     for title, vs in sets:
         ms = []
         for v in vs:
@@ -366,6 +366,10 @@ def main(argv=None):
             m = R.metrics(b, since)
             m["set"] = title.split("(")[0].strip()
             ms.append(m)
+            for t in b.closed:
+                t2 = dict(t)
+                t2["variant"] = v["name"]
+                alltr.append(t2)
         ms.sort(key=lambda m: -m["pnl"])
         allm += ms
         n = sum(m["n"] for m in ms)
@@ -424,6 +428,12 @@ def main(argv=None):
         w.writerow(keys)
         for m in allm:
             w.writerow([m.get(k) for k in keys])
+    with open(os.path.join(ROOT, "reports", "BACKTEST_trades.jsonl"), "w") as f:
+        for t in alltr:
+            f.write(json.dumps({k: t.get(k) for k in ("variant", "asset", "tf", "side", "entry",
+                                                     "shares", "cost", "stake", "p", "edge", "exit",
+                                                     "pnl", "hold", "start")}) + "\n")
+    print("zapisano: reports/BACKTEST_trades.jsonl (%d transakcji)" % len(alltr))
     print("\nzapisano: %s oraz reports/BACKTEST.csv | transakcji razem: %d, suma %+.2f$"
           % (os.path.relpath(out), tot_n, tot_p))
     return 0
