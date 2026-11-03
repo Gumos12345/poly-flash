@@ -3,6 +3,15 @@
 Silnik jest **bez zależności** (tylko biblioteka standardowa Pythona) — żadnego `pip install`,
 żadnych kluczy API. Potrzebny tylko git i python.
 
+## 0. Szybka odpowiedź: 'czy oba dry-runy działają?'
+```bash
+pgrep -af 'dryrun'                       # powinny być 2 linie (albo 1 przy start_both)
+tail -3 logs/dryrun1.log logs/dryrun2.log  # linie 'cykl ... err 0'
+python3 dryrun1_master.py --report | head -6
+python3 dryrun2_master.py --report | head -6
+```
+Czas w logach jest w **UTC** (telefon zwykle pokazuje UTC+1/UTC+2).
+
 ## 1. Jednorazowa instalacja
 ```bash
 pkg update -y && pkg install -y git python
@@ -23,9 +32,20 @@ python3 -m unittest -q tests_engine
 ```
 
 ## 4. Start OBU dry-runów (w tle, bankroll 50 $, stawka 1.25 $)
+
+**Wariant A (zalecany na telefonie) - oba w JEDNYM procesie** (wspólne pobieranie danych,
+~2x szybciej i o połowę mniej zapytań - na LTE/telefonie to duża różnica):
 ```bash
 chmod +x *.sh
+./start_both.sh
+tail -f logs/both.log
+```
+
+**Wariant B - dwa osobne procesy** (dokładnie jak w sandboxie; więcej zapytań, wolniejsze cykle):
+```bash
 ./start_all.sh
+tail -f logs/dryrun1.log
+tail -f logs/dryrun2.log
 ```
 
 ## 5. Podgląd na żywo
@@ -47,7 +67,7 @@ w Chrome. Klikasz nagłówek kolumny = sortowanie.
 
 ## 7. Stop / wznowienie
 ```bash
-./stop_all.sh                 # zatrzymuje oba (stan zapisany w state/*.json)
+./stop_all.sh                 # zatrzymuje oba procesy (także tryb start_both) — stan zapisany
 ./start_all.sh                # UWAGA: start_all.sh zeruje stan!
 # wznowienie BEZ zerowania:
 python3 dryrun1_master.py --bank 50 --stake 1.25
