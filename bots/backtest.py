@@ -232,6 +232,8 @@ def run_variant(v, wins_ctx, bank=50.0):
         prev_edge = None
         for i, (c, t) in enumerate(snaps):
             st, lvl = b.stake_now()
+            if st <= 0 or st > b.equity():
+                break                    # brak kapitalu na stawke (na zywo tez nie wchodzimy)
             hit = gate(v, c, prev_edge)
             if hit is None:
                 p_up, _s = E.model_probs(c, v.get("model", "v1"), v.get("w_mkt", 0.0), v.get("vol_cushion", 1.0))
