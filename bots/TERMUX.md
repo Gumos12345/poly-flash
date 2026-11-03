@@ -95,6 +95,22 @@ Wynik: **BACKTEST.html** (ta sama tabela co RAPORT.html) + `reports/BACKTEST.csv
 Pobrane okna są cache'owane w `backtest_cache/`, więc kolejne uruchomienia i przerwane przebiegi
 dokańczają się bez ponownego pytania API.
 
+
+## 6c. LIVE: S2_TP70 na wszystkie 5m/15m (bankroll 50$, stawka 1.25$, drabinka +1%/+1%)
+```bash
+pip install py-clob-client-v2            # to samo SDK, ktorego uzywa Twoj najr_live_UP_HOLD.py
+export PM_PRIVATE_KEY="0x..."             # klucz prywatny portfela
+export PM_FUNDER="0x..."                  # adres portfela/proxy z USDC (jak w UI Polymarket)
+export PM_SIG_TYPE=3                      # 1 = email/Magic, 2 = proxy, 3 = gnosis (domyslnie w bocie)
+
+python3 live_s2.py --check                # 1) logowanie + saldo + rynki, ZERO zlecen
+python3 live_s2.py --paper                # 2) 24-48 h na zywych ksiazkach, bez pieniedzy
+I_UNDERSTAND_RISK=1 python3 live_s2.py --live --yes --bank 50 --stake 1.25 --max-order 1.25 --max-open 3
+```
+Podglad: `python3 tabelka.py --set 3 -w`  •  stop: `Ctrl+C` albo `pkill -f live_s2.py`
+Bezpieczniki: max_order 1.25$, max_open 3, dzienny stop 10% kapitalu, jedna pozycja na rynek,
+BRAK ponowien po niejednoznacznej odpowiedzi. Wygrane z rozliczen odbierasz w UI (Claim).
+
 ## 7. Stop / wznowienie
 ```bash
 ./stop_all.sh                 # zatrzymuje oba procesy (także tryb start_both) — stan zapisany
