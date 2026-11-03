@@ -19,7 +19,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-SETS = {"1": ("dryrun1", "PRZEBIEG 1 (25 wariantów)"), "2": ("dryrun2", "PRZEBIEG 2 (42 warianty)")}
+SETS = {"1": ("dryrun1", "PRZEBIEG 1 (25 wariantów)"), "2": ("dryrun2", "PRZEBIEG 2 (42 warianty)"), "3": ("live_s2", "LIVE/PAPER S2_TP70")}
 
 
 def load(name):
@@ -85,7 +85,8 @@ def render(which, top, sort_by, show_trades):
         if not d:
             rows_out.append("  (brak %s — bot jeszcze nie zapisał stanu)" % name)
             continue
-        ms = [m_of(b, d.get("start", time.time())) for b in d["books"].values()]
+        books = d.get("books") or ({"1": d["book"]} if d.get("book") else {})
+        ms = [m_of(b, d.get("start", time.time())) for b in books.values()]
         ms.sort(key={"pnl": lambda m: -m["pnl"], "wr": lambda m: -m["wr"], "n": lambda m: -m["n"],
                      "dd": lambda m: m["dd"]}.get(sort_by, lambda m: -m["pnl"]))
         n = sum(m["n"] for m in ms)
@@ -107,7 +108,7 @@ def render(which, top, sort_by, show_trades):
                         "%+.3f" % m["edge"], str(m["open"])]
             rows_out.append(line(row, widths))
         if show_trades:
-            cl = [(b.get("name", "?"), t) for b in d["books"].values()
+            cl = [(b.get("name", "?"), t) for b in (d.get("books") or {"1": d.get("book") or {}}).values()
                   for t in (b.get("closed") or [])]
             cl.sort(key=lambda bt: -bt[1].get("t_open", 0))
             rows_out.append("  ostatnie transakcje:")
@@ -122,7 +123,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-w", "--watch", action="store_true")
     ap.add_argument("-i", "--interval", type=int, default=20)
-    ap.add_argument("--set", choices=["1", "2", "both"], default="both")
+    ap.add_argument("--set", choices=["1", "2", "3", "both"], default="both")
     ap.add_argument("--top", type=int, default=15)
     ap.add_argument("--sort", choices=["pnl", "wr", "n", "dd"], default="pnl")
     ap.add_argument("--trades", action="store_true")
