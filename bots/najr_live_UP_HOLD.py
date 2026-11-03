@@ -241,7 +241,8 @@ ANTI_MARGIN = 0.03                            # wariant TP nie wchodzi, gdy ask 
 NAJR_STEP = float(os.environ.get("NAJR_STEP", "0.02"))     # o ile % rosnie stawka na kazde +2% bankrolla (0.02 / 0.04 / 0.05)
 NAJR_EXIT = [x.strip() for x in os.environ.get("NAJR_EXIT", "TP80,HOLD").upper().split(",") if x.strip()]    # TP40 TP50 TP60 TP70 TP80 TP90 HOLD (po przecinku)
 LIVE_CFG["step_stake"] = NAJR_STEP
-STAKE_SCHEMES = {"UP": (0.02, NAJR_STEP), "UD": (0.02, NAJR_STEP)}   # UP: tylko w gore (zapamietuje szczyt), UD: w gore i w dol
+NAJR_STEP_BANK = float(os.environ.get("NAJR_STEP_BANK", "0.02"))   # krok bankrolla w schemacie stawki (0.01 = +1%)
+STAKE_SCHEMES = {"UP": (NAJR_STEP_BANK, NAJR_STEP), "UD": (NAJR_STEP_BANK, NAJR_STEP)}   # UP: tylko w gore (zapamietuje szczyt), UD: w gore i w dol
 SCHEME_LABEL = {k: f"+{round(v[1] * 100)}%/{round(v[0] * 100)}%" for k, v in STAKE_SCHEMES.items()}   # stawka / bankroll
 # drabinka stawki (tylko DRY, --ladder): stawka rośnie I maleje z bankrollem + reset przy podwojeniu (12->24->48->96...)
 #   poziom bazowy: 12$ -> start_stake (1.2$); potem baza = ref/div (24$->2$, 48$->4$, 96$->8$...)

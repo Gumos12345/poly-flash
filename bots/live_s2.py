@@ -255,7 +255,7 @@ class LiveRun:
                     continue
                 if c.depth(side) < V["depth_x"] * st / max(ask, 0.01):
                     continue
-                k = (slug, side)
+                k = slug + "|" + side      # JSON wymaga kluczy tekstowych
                 self.state["streak"][k] = self.state["streak"].get(k, 0) + 1
                 if self.state["streak"][k] < V["persist"]:
                     continue
