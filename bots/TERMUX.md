@@ -111,6 +111,23 @@ Podglad: `python3 tabelka.py --set 3 -w`  •  stop: `Ctrl+C` albo `pkill -f liv
 Bezpieczniki: max_order 1.25$, max_open 3, dzienny stop 10% kapitalu, jedna pozycja na rynek,
 BRAK ponowien po niejednoznacznej odpowiedzi. Wygrane z rozliczen odbierasz w UI (Claim).
 
+
+## 6d. DWA boty naraz (S2_TP70 + BIN) - jak pilnowac ekspozycji
+```bash
+# bot A (S2_TP70): 5 pozycji, dzienny stop -50%%, drabinka +1%%/+1%%
+python3 live_s2.py --live --yes --bank 50 --stake 1.25 --max-order 1.25 --max-open 5 --daily-stop 0.5
+
+# bot B (Twoj najr_live jako BIN, id 17): 3 pozycje, twardy prog kapitalu 25$ (-50%%)
+NAJR_LIVE=BIN NAJR_STEP=0.01 NAJR_STEP_BANK=0.01 \
+  python3 najr_live_UP_HOLD.py --live --yes --bankroll 50 --stake 1.25 --max-order 1.25 \
+  --stop 25 --max-poz 3 --max-lacznie 3 --max-open 3.75 \
+  --bin-tp 0.70 --fair-min 0.45 --edge-5m 0.04 --edge-15m 0.04 --bin-max-px-5m 0.90
+
+# wspolny licznik ekspozycji obu botow (drugi terminal)
+python3 exposure.py -w -i 15 --max-cost 10
+```
+Maks. ekspozycja: 5 x 1.25 + 3 x 1.25 = **10 $** (20%% bankrolla). Stopy dzialaja NIEZALEZNIE.
+
 ## 7. Stop / wznowienie
 ```bash
 ./stop_all.sh                 # zatrzymuje oba procesy (także tryb start_both) — stan zapisany

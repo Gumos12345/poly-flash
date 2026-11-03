@@ -4493,7 +4493,7 @@ def main():
     ap.add_argument("--ladder-step-stake", type=float, default=0.04, help="--ladder: zmiana stawki na krok (0.04 = 4%%)")
     ap.add_argument("--ladder-min", type=float, default=1.0, help="--ladder: dolny limit stawki $ (1.0)")
     args = ap.parse_args()
-    if args.live and LIVE_ID is None:
+    if args.live and LIVE_ID is None and os.environ.get("NAJR_LIVE", "").strip().upper() != "BIN":
         sys.exit(f"LIVE: brak wariantu {LIVE_VARIANT} (NAJR_EXIT={','.join(NAJR_EXIT)}). Dla UP_HOLD uzyj NAJR_EXIT zawierajacego HOLD (domyslnie TP80,HOLD).")
     args.ladder = not args.live        # dry: drabina z resetem przy podwojeniu; live: stake_for (UP, reset przy podwojeniu)
     args.no_twap = True                # ta wersja ZAWSZE bez wymogu TWAP60
@@ -4559,6 +4559,8 @@ def main():
     ids = [i for i in ids if i in {s["id"] for s in STRATS}]
     if args.live:
         ids = [LIVE_ID]                                   # LIVE: tylko wariant z NAJR_LIVE (domyslnie ANTI_UP_HOLD)
+        if os.environ.get("NAJR_LIVE", "").strip().upper() == "BIN":
+            ids = [17]                                    # NAJR_LIVE=BIN -> BIN (id 17) na zywo
     CFG["short_only"] = True      # jasiuplacek: zawsze tylko 5m/15m
     if not args.with_sniper:
         ids = [i for i in ids if i != 3] or list(DEFAULT_IDS)      # SNIPER wyłączony; bez niego zostaje BIN
