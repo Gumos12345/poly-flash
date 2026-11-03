@@ -81,6 +81,20 @@ Kolumny: `n` liczba transakcji, `WR%` skuteczność, `PnL$` zysk, `W/L` wygrane/
 `px` średnia cena wejścia, `edge` średnia przewaga przy wejściu, `otw` otwarte pozycje.
 Tabelka **tylko czyta** `state/*.json`, więc można ją odpalać równolegle z botem.
 
+
+## 6b. Backtest na danych historycznych (1 dzień / tydzień)
+Ten sam kod co dry-run, ale na cenach z przeszłości (CLOB `prices-history` + rozliczenia z Gammy).
+```bash
+python3 backtest.py --days 1                        # doba, BTC/ETH/SOL, 5m+15m (~2-3 min)
+python3 backtest.py --days 7 --assets BTC,ETH       # tydzień, 2 monety (~15-30 min na LTE)
+python3 backtest.py --hours 6 --assets BTC --tfs 5m
+python3 backtest.py --days 1 --slip 0.02            # gorsze wypełnienia (2c poślizgu)
+python3 backtest.py --days 1 --limit 50             # szybki test na 50 oknach
+```
+Wynik: **BACKTEST.html** (ta sama tabela co RAPORT.html) + `reports/BACKTEST.csv`.
+Pobrane okna są cache'owane w `backtest_cache/`, więc kolejne uruchomienia i przerwane przebiegi
+dokańczają się bez ponownego pytania API.
+
 ## 7. Stop / wznowienie
 ```bash
 ./stop_all.sh                 # zatrzymuje oba procesy (także tryb start_both) — stan zapisany
