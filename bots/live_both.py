@@ -449,7 +449,7 @@ def main(argv=None):
     ap.add_argument("--stake", type=float, default=1.25, help="stawka startowa ($)")
     ap.add_argument("--max-order", type=float, default=1.25, help="twardy limit jednego zlecenia ($)")
     ap.add_argument("--max-open", type=int, default=4, help="maks. otwartych pozycji na bota")
-    ap.add_argument("--daily-stop", type=float, default=0.5, help="dzienny stop (0.5 = -50%)")
+    ap.add_argument("--daily-stop", type=float, default=0.5, help="dzienny stop (0.5 = -50%%)")
     ap.add_argument("--minutes", type=float, default=0.0, help="auto-stop po minutach")
     ap.add_argument("--sleep", type=float, default=2.0, help="przerwa między cyklami (s)")
     args = ap.parse_args(argv)
