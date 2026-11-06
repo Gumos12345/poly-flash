@@ -245,8 +245,8 @@ class BothRun:
                 if self.eng.feed.spot_age(asset) > 5:
                     continue
                 slug = "%s-updown-%s-%d" % (asset.lower(), tf, c.start)
-                if any(pp["slug"] == slug for pp in b.positions.values()) \\
-                        or now < self.state["blocked"].get(slug, 0):
+                if any(pp["slug"] == slug for pp in b.positions.values()) or now < self.state["blocked"].get(slug, 0):
+
                     continue
                 p_up, _s = E.model_probs(c, v["model"], v["w_mkt"], v["vol_cushion"])
                 sides = []
